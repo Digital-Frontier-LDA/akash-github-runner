@@ -331,3 +331,52 @@ def test_the_funding_gate_still_behaves_as_before(tmp_path):
     # survived this test until the delimiter was pinned. A substring that passes for the
     # wrong reason is indistinguishable from one that passes for the right one.
     assert "gates-on-console-deploy-credit: " in r.stdout, r.stdout
+
+
+# ----------------------------------------------------------------------------------
+# ⛔⛔ REGRESSION — a partial scan must never report a pass
+#
+# Caught by CodeRabbit on #21. `unreadable` was counted and PRINTED, then ignored by the
+# exit path: an unparseable workflow plus no findings printed "OK" and returned 0.
+#
+# This is the rule's OWN `collapses-unknown-into-declined` inverted — a could-not-measure
+# collapsing into a measured verdict, in the permissive direction. A rule that exists to
+# catch false all-clears was emitting one, which is why it needed an outside reader.
+# ----------------------------------------------------------------------------------
+
+MALFORMED = "name: broken\non: [push]\njobs:\n  a: :\n    - oops\n"
+
+
+def test_an_unreadable_workflow_never_reports_a_pass(tmp_path):
+    (tmp_path / "ok.yml").write_text(
+        "name: fine\non: [push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "broken.yml").write_text(MALFORMED, encoding="utf-8")
+    r = _run("--gate", "capacity", tmp_path)
+    assert r.returncode == 2, f"a partial scan returned {r.returncode}:\n{r.stdout}"
+    assert "PARTIAL SCAN" in r.stdout
+    assert "OK: every in-scope gate routes" not in r.stdout, "printed a clean bill on a partial scan"
+
+
+def test_unreadable_dominates_even_when_findings_exist(tmp_path):
+    """rc=1 would tell a consumer 'these are all of them'. The unaudited files may carry
+    more, so the incompleteness outranks the findings — but the findings still PRINT,
+    because an unreadable neighbour does not make them untrue."""
+    (tmp_path / "bad.yml").write_text(textwrap.dedent(REDERIVES).lstrip(), encoding="utf-8")
+    (tmp_path / "broken.yml").write_text(MALFORMED, encoding="utf-8")
+    r = _run("--gate", "capacity", tmp_path)
+    assert r.returncode == 2, r.stdout
+    assert "DECIDES capacity" in r.stdout, "findings must still be reported"
+    assert "PARTIAL SCAN" in r.stdout
+
+
+def test_a_fully_readable_clean_scan_still_passes(tmp_path):
+    """The control: the fix must not make every scan a 2."""
+    (tmp_path / "ok.yml").write_text(
+        "name: fine\non: [push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
+        encoding="utf-8",
+    )
+    r = _run("--gate", "capacity", tmp_path)
+    assert r.returncode == 0, r.stdout
+    assert "OK: every in-scope gate routes" in r.stdout

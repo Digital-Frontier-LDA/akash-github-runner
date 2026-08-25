@@ -89,6 +89,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     for p in problems:
         print(f"  {p}")
+
+    # ⛔⛔ A PARTIAL SCAN IS NOT A PASS, AND IT IS NOT A COMPLETE FINDING SET EITHER.
+    #
+    # This block printed "OK: every in-scope gate routes through its primitive" and
+    # returned 0 whenever `problems` was empty — INCLUDING when files had failed to audit.
+    # A rule whose entire job is catching false all-clears was emitting one.
+    #
+    # It is `collapses-unknown-into-declined` INVERTED: that anti-pattern reports a
+    # SHORTAGE on an instrument failure; this reported a CLEAN BILL on one. Same root —
+    # a could-not-measure collapsing into a measured verdict — opposite direction, and the
+    # quieter of the two, because nobody investigates a pass.
+    #
+    # ⚠ Findings still print above: an unreadable file does not make the findings we DID
+    # get untrue. But `unreadable` dominates the exit code, because 1 would tell a consumer
+    # "these are all of them" when the unaudited files may carry more.
+    if unreadable:
+        print(
+            f"⛔ PARTIAL SCAN — {unreadable} of {len(files)} workflow(s) could not be "
+            "audited. This is NOT a pass and NOT a complete finding set: the unaudited "
+            "files may carry either. Fix the unparseable file(s) and re-run."
+        )
+        return 2
     if not problems:
         print("  OK: every in-scope gate routes through its primitive.")
     return 1 if problems else 0
