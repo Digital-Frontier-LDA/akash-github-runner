@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -188,10 +189,40 @@ def print_report(report: Report) -> None:
     print(f"RESULT: {'MERGE-READY' if report.ok else 'NOT MERGE-READY'}")
 
 
+_REPO_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def _repo_arg(value: str) -> str:
+    """Validate owner/name before it reaches a URL.
+
+    The API base is a literal ``https://`` prefix, so a repo value cannot change
+    the scheme -- a scanner flagging ``file://`` risk here is a false positive on
+    the instance. It is fixed anyway: a scanner cannot distinguish this call site
+    from an injectable one, this tool is meant to run in CI where ``repo`` may
+    come from a workflow input, and removing the class beats arguing the instance.
+    """
+    if not _REPO_RE.match(value):
+        raise argparse.ArgumentTypeError(
+            f"repo must be owner/name with no path or scheme characters, got {value!r}"
+        )
+    return value
+
+
+def _pr_arg(value: str) -> int:
+    """A PR number is a positive integer, and 0 or negative would silently 404."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"pr must be an integer, got {value!r}") from None
+    if number <= 0:
+        raise argparse.ArgumentTypeError(f"pr must be positive, got {number}")
+    return number
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("repo", help="owner/name")
-    parser.add_argument("pr", type=int)
+    parser.add_argument("repo", type=_repo_arg, help="owner/name")
+    parser.add_argument("pr", type=_pr_arg)
     parser.add_argument("--base", default=None)
     parser.add_argument("--token", default=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
     args = parser.parse_args(argv)
