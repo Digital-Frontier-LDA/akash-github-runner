@@ -50,7 +50,7 @@ It was right. Measured again **2026-08-25 10:01Z**, org runner listing streamed 
 
 | repo | emitted prefixes | claimable by a reaper | offline registrations |
 |---|---|---|---|
-| `Borduas-Holdings/blazing` | `akash-integration-`, `akash-ci-`, `akash-fast-pool-`, `akash-e2epool-` | **1 of 4** | 167 |
+| `Borduas-Holdings/blazing` | `df-flow-`, `akash-integration-`, `akash-fast-pool-`, `akash-e2epool-` | **all claimable** | 167 |
 | `Borduas-Holdings/Blazing-Back` | `df-core-`, plus `akash-*` from any pre-`30fcc2c84` ref | `df-core-` only | 175 |
 
 342 offline registrations across the two, and the rule that detects exactly this defect has been
@@ -79,5 +79,18 @@ rather than in a commit message because this file is where the difference betwee
 *running* is supposed to be impossible to skip.
 
 ⚠ Counts are a single 10:01Z sample of a population an hourly reaper is draining — the
-**composition** is the durable finding, the totals are not. And the `1 of 4` figure is `main` as of
+**composition** is the durable finding, the totals are not. ⛔ **CORRECTION (2026-08-25).** An earlier revision of this row read **`1 of 4`**. That was
+measured against a **stale local branch**, not `origin/main`. Verified on `origin/main`,
+`scripts/akash-runner-reaper.sh:66-71` allowlists **six** prefixes and both leaking ones are in
+it. Re-running `check_backstop_covers_producers.py` against `origin/main` for both repos:
+`Blazing-Back exit=0 (56 workflows)`, `blazing exit=0 (21 workflows)` — **PASS/PASS**. Every
+`covered: NO` row in that rule's 2026-08-24 docstring has since been fixed (Blazing-Back's
+`runner-time-to-ready.yml` in `ab615607b` / #1480; blazing's by the `df-flow-` rename).
+
+⚠ **PASS means every emitted prefix is CLAIMABLE. It does not mean nothing leaks.** blazing
+still carries ~167 offline registrations under prefixes its reaper does cover — a production
+RATE problem the coverage rule cannot see, and the reason blazing#689 is still the right fix.
+
+⇒ The adoption gap below stands unchanged and is the real finding: neither repo consumes this
+standard, so the rule that would have caught the original defect never runs for them.
 2026-08-25; it moves as either repo changes its labels.
