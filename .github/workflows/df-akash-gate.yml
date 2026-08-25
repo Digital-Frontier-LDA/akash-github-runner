@@ -1,0 +1,83 @@
+name: df-akash-gate
+# Reusable Sentinel deploy-GATE that runs on an EPHEMERAL Akash lease via just-akash DISPATCH
+# (see gate/AKASH-OFFLOAD.md). Replaces `runs-on: [self-hosted, sentinel]` for gate jobs so a
+# single long engagement can't starve every other gate, and each engagement gets an isolated box
+# with the web toolchain. No GitHub runner token ever enters the lease. Cross-org safe.
+#
+# STATUS: framework. The scanner image + scanner.sdl + warm pool are the remaining implementation
+# (marked TODO). The lifecycle/reap/manifest/allowlist skeleton is here and quorum-ratified.
+on:
+  workflow_call:
+    inputs:
+      target:        { description: "URL to pentest (e.g. https://api.digitalfrontier.so)", required: true, type: string }
+      engagement_id: { description: "stable id for tagging/manifest", required: false, type: string, default: "" }
+      profile:       { description: "smoke | full", required: false, type: string, default: "full" }
+      max_ttl_min:   { description: "hard lease cap (minutes)", required: false, type: number, default: 90 }
+    secrets:
+      SOPS_AGE_KEY_FILE: { required: true }   # decrypts Akash creds + off-SDL secrets from secrets/prod.sops.env
+
+permissions:
+  contents: read
+concurrency:
+  group: df-akash-gate-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/sops-env
+        with: { file: "secrets/prod.sops.env", age_key_env: SOPS_AGE_KEY_FILE }
+        env: { SOPS_AGE_KEY_FILE: "${{ secrets.SOPS_AGE_KEY_FILE }}" }
+
+      - name: Allowlist + manifest
+        id: pre
+        env:
+          TARGET: ${{ inputs.target }}
+          REPO: ${{ github.repository }}
+          RUN: ${{ github.run_id }}
+          ATTEMPT: ${{ github.run_attempt }}
+          EID: ${{ inputs.engagement_id }}
+          TTL: ${{ inputs.max_ttl_min }}
+        run: |
+          set -euo pipefail
+          # per-repo/org allowlist — only sanctioned repos may mint Akash gate leases (guardrail).
+          case "$REPO" in
+            Digital-Frontier-LDA/*|Borduas-Holdings/Blazing-Back|Borduas-Holdings/blazing) : ;;
+            *) echo "::error::$REPO not on the df-akash-gate allowlist"; exit 1 ;;
+          esac
+          # lease manifest FIRST (source of truth for reaping/audit even if tagging/state is lost)
+          eid="${EID:-$REPO-$RUN-$ATTEMPT}"
+          printf '{"repo":"%s","run_id":"%s","attempt":"%s","engagement_id":"%s","max_ttl_min":%s,"target":"%s","status":"provisioning"}\n' \
+            "$REPO" "$RUN" "$ATTEMPT" "$eid" "$TTL" "$TARGET" > lease-manifest.json
+          echo "eid=$eid" >> "$GITHUB_OUTPUT"
+          pipx install just-akash 2>/dev/null || pip install just-akash 2>/dev/null || true
+
+      - name: Dispatch engagement on an ephemeral Akash lease
+        id: run
+        env:
+          TARGET: ${{ inputs.target }}
+          PROFILE: ${{ inputs.profile }}
+          EID: ${{ steps.pre.outputs.eid }}
+        run: |
+          set -euo pipefail
+          # TODO(scanner image): deploy gate/scanner.sdl — a box with gate/ + web toolchain + NetBird client.
+          #   just-akash injects OFF-SDL, short-TTL 1-use secrets: NETBIRD_SETUP_KEY (~30m), SENTINEL_API_KEY,
+          #   and a pre-signed GCS URL the lease PUSHES its SARIF/report to (results out-of-band).
+          # DSEQ=$(just-akash deploy gate/scanner.sdl --tag gate --tag "eid=$EID" --json | jq -r .dseq)
+          # echo "dseq=$DSEQ" >> "$GITHUB_OUTPUT"
+          # just-akash exec "$DSEQ" -- bash /app/gate/run-profile.sh --profile <(printf '{"customer":"%s","target":"%s"}' "$EID" "$TARGET")
+          #   → run-profile.sh exits 1 on BLOCK (evidence-gated verdict) → this step fails CLOSED.
+          echo "::notice::df-akash-gate framework — scanner image/SDL is the remaining build (gate/AKASH-OFFLOAD.md)"
+          echo "dseq=" >> "$GITHUB_OUTPUT"
+
+      - name: Reap the lease (always)
+        if: always()
+        env:
+          DSEQ: ${{ steps.run.outputs.dseq }}
+        run: |
+          # Guaranteed teardown regardless of what happened inside the lease. Idempotent.
+          [ -n "${DSEQ:-}" ] && just-akash close "$DSEQ" 2>/dev/null || true
+          echo "reaped ${DSEQ:-<none>}"
