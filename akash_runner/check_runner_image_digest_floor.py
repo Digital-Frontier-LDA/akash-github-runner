@@ -117,11 +117,17 @@ def main(argv: list[str] | None = None) -> int:
         for finding in file_findings:
             bad += 1
             print(f"::error file={path},title=Runner image pin::{finding}")
+    # ⛔ FINDINGS ARE CHECKED BEFORE NOT-APPLICABLE, AND THE ORDER IS THE POINT.
+    # A directory with an unparseable workflow and no runner image produced findings,
+    # printed them as ::error, and then returned 0 through the not-applicable branch --
+    # so the advisory check reported PASS while having emitted errors. NOT APPLICABLE
+    # means "the axis does not apply here", which cannot be true once something has
+    # already gone wrong on that axis.
+    if bad:
+        return 1
     if runner_files == 0:
         print("Runner images: NOT APPLICABLE — no runner image references found")
         return 0
-    if bad:
-        return 1
     print(f"Runner images: PASS — {runner_files} workflow(s) checked")
     return 0
 

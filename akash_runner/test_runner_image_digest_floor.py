@@ -71,3 +71,23 @@ jobs:
 """
     )
     assert mod.findings(workflow) == []
+
+
+def test_a_finding_beats_not_applicable(tmp_path) -> None:
+    """A parse error must FAIL even when no runner image is present.
+
+    The not-applicable branch used to return 0 before findings were checked, so a
+    directory holding an unparseable workflow AND no runner image printed its
+    ::error annotations and then reported NOT APPLICABLE — which the conformance
+    action renders as PASS. NOT APPLICABLE asserts "this axis does not apply
+    here"; that cannot be true once something has already gone wrong on the axis.
+    """
+    d = tmp_path / "workflows"
+    d.mkdir()
+    # invalid YAML, and deliberately NO runner image reference anywhere
+    # genuinely unparseable: an unclosed flow sequence raises yaml.YAMLError.
+    # ⚠ a DUPLICATE KEY does NOT — safe_load silently keeps the last — so a
+    # duplicate-key fixture would leave this test passing vacuously.
+    (d / "broken.yml").write_text("jobs:\n  a: [1, 2\n", encoding="utf-8")
+    rc = mod.main(["--workflows-dir", str(d)])
+    assert rc in (1, 2), f"a directory with findings must not return 0, got {rc}"
