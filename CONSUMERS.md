@@ -64,6 +64,56 @@ enforcing the whole time.
 | `Borduas-Holdings/blazing` | **NONE** |
 | `Borduas-Holdings/Blazing-Back` | **NONE** |
 
+### `df-cicd` — the author, measured 2026-08-25
+
+`Digital-Frontier-LDA/df-cicd` wrote this standard and hosted it until the split. It is the
+sharpest version of the gap above, and the answer is **not** "it should adopt and doesn't".
+Measured, not assumed:
+
+| question | measured answer |
+|---|---|
+| calls the canonical `runner-pool.yml`? | **no** — zero references in `.github/` |
+| emits runner registrations? | **no** — `RUNNER_NAME_PREFIX` appears nowhere in the repo |
+| provisions an Akash lease? | **no** — `df-akash-gate.yml`'s `just-akash deploy` is commented out and the step writes `dseq=` unconditionally |
+| `runs-on: [self-hosted, sentinel]` | pre-existing long-lived runners; **not** registrations this repo mints |
+
+⇒ **The registration-leak rules are NOT APPLICABLE to `df-cicd`.** It has no producers, so
+`check_backstop_covers_producers` has nothing to cover. Wiring it would produce a green that
+certifies nothing — the precise defect this campaign exists to remove, installed by the campaign.
+A `NONE` row here is the honest state.
+
+⚠ **`NOT APPLICABLE` is a per-rule verdict, not a per-repo one.** The dir-scoped rules were run
+against `df-cicd`'s 25 workflows on 2026-08-25 and 8 of 10 pass **non-vacuously** (25 files
+examined each). Two report real defects, both ADVISORY:
+
+| rule | finding |
+|---|---|
+| `check_teardown_cannot_be_silenced` | `df-akash-gate.yml:82` — `[ -n "${DSEQ:-}" ] && just-akash close "$DSEQ" 2>/dev/null \|\| true`. Already named in this rule's own ADVISORY entry as the only instance repo-wide. |
+| `check_schedule_inputs_are_empty` | `ci-unrunnable-tracker.yml`, `secret-sweep-full-history.yml` |
+
+So the standard is not inapplicable to `df-cicd` as a whole — only its registration half is.
+
+### ⛔ Why `df-cicd` cannot adopt the dir-scoped half today
+
+`check_standard.py` is **ENFORCING** and reports `no canonical just-akash runner-pool reusable job
+found` against **every** `df-cicd` workflow — measured on `df-akash-gate.yml`, `ci.yml` and
+`sentinel-engagement.yml`, exit 1 each. `df-cicd` is neither a consumer of the pool nor the pool,
+so pool-as-target mode does not reach it either. Adding the conformance workflow as it stands would
+make the repo **permanently red for a defect it does not have**, which is a miswiring, not a
+finding.
+
+The composite action already anticipates this: `workflow` is `required: false` there and
+`check_standard` runs only `if [ -n "$WORKFLOW" ]`. **The reusable does not mirror it** —
+`workflow` is `required: true` in `reusable-akash-runner-conformance.yml`, so a consumer calling
+the reusable cannot select the dir-scoped-only adoption the action supports.
+
+⇒ That mismatch, not `df-cicd`, is what blocks an honest partial adoption. Until it is closed, the
+row below is the accurate one.
+
+| repo | consumes conformance? | why |
+|---|---|---|
+| `Digital-Frontier-LDA/df-cicd` | **NONE** | registration rules not applicable (no producers); dir-scoped-only adoption not expressible through the reusable |
+
 ### The rung this adds to #154's ladder
 
 This file's own header already says it: *"A standard that has never been consumed has never been
