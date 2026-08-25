@@ -28,8 +28,31 @@ from pathlib import Path
 import yaml
 
 SUPPORTED_FLOOR = (2, 336, 0)
-_RUNNER_RE = re.compile(r"(?:^|/)github-runner:(?P<tag>[^@\s]+)(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?$")
-_IMAGE_REF = re.compile(r"(?:[A-Za-z0-9_.-]+/)?github-runner:[^\s\"'<>`]+")
+# Two reference forms exist in this fleet and BOTH must match:
+#   name:TAG@DIGEST   myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:8eeec3e8...   (Blazing-Back)
+#   name@DIGEST       ghcr.io/akash-network/github-runner@sha256:7509763a...           (just-akash)
+# ⛔ The first version of this regex required a literal ":" before the digest, so the
+# TAGLESS form never matched and the rule reported NOT APPLICABLE on the very repo whose
+# deprecated digest motivated it -- on both the defective AND the fixed state. The tag
+# group is therefore OPTIONAL, and a digest with no tag is its own case: pinned, but the
+# version is not readable from the reference, so currency cannot be checked here.
+_RUNNER_RE = re.compile(
+    r"(?:^|/)github-runner"
+    r"(?::(?P<tag>[^@\s]+))?"
+    r"(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?"
+    r"(?=$|\s)"
+)
+# ⛔ THE SAME "a tag is always present" ASSUMPTION WAS ENCODED IN THREE PLACES:
+# this extractor, the dict-path string test below, and _RUNNER_RE. Fixing one left
+# the other two blind, so the rule reported NOT APPLICABLE on just-akash -- whose
+# reference is ghcr.io/akash-network/github-runner@sha256:... with NO tag -- on both
+# its defective and its fixed state. All three now accept name@digest.
+_IMAGE_REF = re.compile(
+    r"(?:[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*/)?"
+    r"github-runner"
+    r"(?::[^\s\"'<>`@]+)?"
+    r"(?:@sha256:[0-9a-fA-F]{64})?"
+)
 _VERSION_RE = re.compile(r"^(?P<version>\d+\.\d+\.\d+)(?:-|$)")
 
 
@@ -40,7 +63,7 @@ def _runner_images(value: object) -> list[str]:
     if isinstance(value, dict):
         images: list[str] = []
         for key, child in value.items():
-            if key == "image" and isinstance(child, str) and "github-runner:" in child:
+            if key == "image" and isinstance(child, str) and "github-runner" in child:
                 images.append(child.strip())
                 continue
             images.extend(_runner_images(child))
@@ -71,7 +94,12 @@ def findings(document: dict | str) -> list[str]:
         if not match:
             out.append(f"runner image {image!r} is not a valid digest-pinned reference")
             continue
-        version = _version(match.group("tag"))
+        # A tagless name@digest reference has no tag group at all, so the version is
+        # not readable from the reference. That is NOT a pass: it falls through to the
+        # "digest but no verifiable version tag" finding below, because claiming PASS
+        # would assert a currency check this rule did not perform.
+        tag = match.group("tag")
+        version = _version(tag) if tag else None
         if not match.group("digest"):
             out.append(f"runner image {image!r} is floating; pin it with @sha256:<digest>")
             continue
