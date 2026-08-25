@@ -62,6 +62,20 @@ on:
         required: false
         type: string
         default: ""
+      target-kind:
+        description: >-
+          OPTIONAL. What the `workflow` file IS — forwarded to check_standard.py, which
+          owns the vocabulary and VALIDATES the claim rather than trusting it.
+
+          Set this when auto-detection judges the file against a contract it does not
+          have. A repo that spends on Akash leases through its own provisioner, instead
+          of calling the canonical pool, is `lease-spender`: without it that file fails
+          with "no canonical just-akash runner-pool reusable job found" forever, and the
+          only escape was to omit `workflow` and lose the workflow-scoped rules that do
+          apply.
+        required: false
+        type: string
+        default: ""
       workflows-dir:
         description: >-
           OPTIONAL. Directory of workflows for the DIRECTORY-SCOPED rules.
@@ -124,3 +138,4 @@ jobs:
         with:
           workflows-dir: ${{ inputs.workflows-dir }}
           workflow: ${{ inputs.workflow }}
+          target-kind: ${{ inputs.target-kind }}

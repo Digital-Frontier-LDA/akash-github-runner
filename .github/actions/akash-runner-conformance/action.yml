@@ -24,6 +24,30 @@ inputs:
       here, it drifts.
     required: false
     default: ""
+  target-kind:
+    description: >-
+      What the `workflow` file IS, when auto-detection would judge it against the wrong
+      contract. Passed straight through to check_standard.py, which owns the vocabulary
+      and validates the claim.
+
+      ⛔ THE CATEGORY EXISTED AND NO CONSUMER COULD SELECT IT. check_standard has judged
+      three shapes since #11 — consumer, pool, and lease-spender (a repo that spends on
+      leases with its own provisioner rather than calling the canonical pool). This
+      action invoked it with no kind at all, so every caller got `auto`, and `auto` errs
+      toward consumer mode. A lease-spender therefore failed with "no canonical
+      just-akash runner-pool reusable job found" — a PERMANENT RED naming a rule the
+      repo was never in scope for. Measured on Blazing-Back (#1628) and df-cicd: both
+      are lease-spenders, both had to choose between that red and omitting `workflow`
+      entirely, which silently drops the workflow-scoped rules that DO apply to them.
+      check_teardown_can_identify PASSES non-vacuously on Blazing-Back — 9 run-steps
+      examined — and was being thrown away to dodge an inapplicable finding.
+
+      ⚠ Declaring a kind is a CLAIM, not an exemption: check_standard verifies it and
+      reports a finding when the evidence contradicts it (a file declaring
+      lease-spender with no lease lifecycle is mislabelled, and says so). Leave unset
+      unless a rule is judging the file against a contract it does not have.
+    required: false
+    default: ""
   workflows-dir:
     description: >-
       The consumer's .github/workflows directory. Several rules judge the REPO rather
@@ -41,6 +65,7 @@ runs:
       env:
         WORKFLOW: ${{ inputs.workflow }}
         WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
+        TARGET_KIND: ${{ inputs.target-kind }}
       run: |
         set -euo pipefail
         python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
@@ -93,7 +118,16 @@ runs:
 
         # ── ENFORCING / ADVISORY, workflow-scoped ─────────────────────────────────────
         if [ -n "${WORKFLOW:-}" ]; then
-          python3 "$ROOT/check_standard.py" -- "$WORKFLOW" || rc=1
+          # ⚠ Built as an ARRAY, not interpolated into the command line: an empty
+          #   TARGET_KIND must contribute NO argument at all. `--target-kind ""` is not
+          #   the same as omitting it — argparse would reject the empty string against
+          #   its choices and every existing caller (all of which leave this unset)
+          #   would start failing on a flag they never passed.
+          KIND_ARGS=()
+          if [ -n "${TARGET_KIND:-}" ]; then
+            KIND_ARGS=(--target-kind "$TARGET_KIND")
+          fi
+          python3 "$ROOT/check_standard.py" "${KIND_ARGS[@]}" -- "$WORKFLOW" || rc=1
           # A teardown that always runs and receives nothing is reachable, and inert. The
           # shape check above cannot see WHEN the lease identity is published; this one can.
           # Measured: it separates just-akash before and after 53515bc, and rejects the
