@@ -42,11 +42,26 @@ on:
   workflow_call:
     inputs:
       workflow:
+        # ⛔ NOT REQUIRED, DELIBERATELY — THE ACTION ALREADY SUPPORTS OMITTING IT.
+        # action.yml declares this `required: false, default: ""` and guards
+        # check_standard with `if [ -n "${WORKFLOW:-}" ]`. Declaring it REQUIRED here
+        # meant a consumer could not select an adoption mode the action already
+        # implements — an asymmetry between the reusable and the thing it wraps.
+        #
+        # Measured on df-cicd: 10 dir-scoped rules over 25 workflows, 8 passing
+        # non-vacuously and 2 reporting real advisory defects — while check_standard
+        # (ENFORCING) exits 1 on every one of its workflows, because that repo is
+        # neither a pool nor a consumer. Requiring `workflow` forced a choice between
+        # a PERMANENT FALSE RED and no adoption at all.
+        #
+        # ⚠ Omitting BOTH inputs is still an error: the action exits 1 rather than
+        # green-ticking an empty verdict, and announces by name the rules it skipped.
         description: >-
           Workflow file to validate (relative path inside the caller checkout).
           Must contain pool, work, and teardown jobs with the DF lifecycle shape.
-        required: true
+        required: false
         type: string
+        default: ""
       workflows-dir:
         description: >-
           OPTIONAL. Directory of workflows for the DIRECTORY-SCOPED rules.
