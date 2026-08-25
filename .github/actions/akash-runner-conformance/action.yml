@@ -133,6 +133,7 @@ runs:
         DIR_SCOPED_ADVISORY=(
           check_reaper_schedule.py
           check_funding_gate_is_not_re_derived.py
+          check_gate_is_not_re_derived.py
           check_schedule_inputs_are_empty.py
           check_unvalidated_default.py
           check_funding_projection_is_quantised.py
@@ -157,6 +158,20 @@ runs:
           # raw numbers. ADVISORY: it fails Blazing-Back today by design, and enforcing
           # before any consumer has adopted the primitive would red every runner workflow.
           advisory check_funding_gate_is_not_re_derived.py "$WORKFLOWS_DIR"
+          # ⛔ THE SAME DEFECT, ONE CLOUD OVER. A gate that re-derives a verdict the
+          # shared primitive already answers is not a funding problem — it recurs per
+          # cloud, and copying the rule per cloud is that mistake one level up. This rule
+          # is registry-driven (akash_runner/gate_registry.py) and every gate in it is
+          # additionally checked for the CROSS-CUTTING #1113 shape: reporting a SHORTAGE
+          # on a path an instrument FAILURE also reaches. Observed on three artefacts
+          # across two clouds; a per-cloud rule cannot see that, because each author
+          # meets it once.
+          #
+          # ⚠ INVOKED AS --gate capacity, NOT --gate all. check_funding_gate_is_not_re_
+          # derived.py above still owns funding and carries its own promotion condition,
+          # which is still pending; running both over funding would double-report and
+          # collapsing them now would discard that record. Collapse when funding promotes.
+          advisory check_gate_is_not_re_derived.py --gate capacity "$WORKFLOWS_DIR"
           # ⛔ EXISTENCE IS NOT COVERAGE. check_dereg_backstop above asks whether a
           # scheduled dereg EXISTS; this asks whether it reaps what the repo EMITS.
           #

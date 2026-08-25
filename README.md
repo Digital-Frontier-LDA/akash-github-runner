@@ -32,6 +32,23 @@ reachable, which is what this repo is for.
 
 ## What lives here
 
+### ⚠ Routing: this repo is the canonical home of the CHECKER
+
+The **standard's text** lives in `df-cicd/standards/AKASH-RUNNER-CI.md`. The **rules that
+enforce it** — `akash_runner/check_*.py` — live here, and df-cicd consumes them through
+`.github/workflows/runner-conformance.yml`.
+
+**A new rule goes here.** df-cicd#177 deleted that repo's entire `akash_runner/` suite when it
+adopted this reusable, so a rule added to df-cicd is removed by the next consolidation — with
+its own tests still green in the deleted copy, which is what makes it silent.
+
+⚠ Measured 2026-08-25: df-cicd#170's eight files are ABSENT from df-cicd `main` and PRESENT
+here, the rule is invoked at `.github/actions/akash-runner-conformance/action.yml`, and its
+call-site guard travelled with it. That pattern reads exactly like merged-then-silently-deleted
+and is not: **the value travelled; only the address changed.** Check which repo before
+concluding either.
+
+
 ```
 akash_runner/     14 conformance rules + 23 test modules + workflow_corpus.py
 baseline/         check_conformance.py — shared Finding/RuleResult types (leaf dependency)
