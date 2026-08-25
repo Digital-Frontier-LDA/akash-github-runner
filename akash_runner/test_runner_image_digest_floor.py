@@ -54,7 +54,9 @@ def test_artifact_derived_below_floor_version_is_distinctly_flagged() -> None:
     assert len(result) == 1 and "below supported floor" in result[0]
 
 
-def test_no_runner_workflow_is_explicitly_not_applicable(tmp_path: Path, capsys) -> None:
+def test_no_runner_workflow_is_explicitly_not_applicable(
+    tmp_path: Path, capsys
+) -> None:
     (tmp_path / "plain.yml").write_text("jobs:\n  check:\n    runs-on: ubuntu-latest\n")
     assert mod.main(["--workflows-dir", str(tmp_path)]) == 0
     assert "NOT APPLICABLE" in capsys.readouterr().out
@@ -122,7 +124,9 @@ def test_the_tagless_digest_form_is_seen_at_all(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     rc = mod.main(["--workflows-dir", str(d)])
-    assert rc == 1, "the tagless digest form must be examined, not reported NOT APPLICABLE"
+    assert rc == 1, (
+        "the tagless digest form must be examined, not reported NOT APPLICABLE"
+    )
 
 
 def test_a_digest_without_a_tag_cannot_have_its_currency_checked() -> None:
@@ -135,3 +139,69 @@ def test_a_digest_without_a_tag_cannot_have_its_currency_checked() -> None:
         out = mod.findings(f"image: {ref}")
         assert out, f"{ref} produced no finding"
         assert "no verifiable version tag" in out[0], out[0]
+
+
+# ---------------------------------------------------------------------------
+# #18 — the rule's own repo name contains its own image name.
+#
+# `github-runner` is a substring of `akash-github-runner`. #16 made the ":" after
+# `github-runner` optional in _IMAGE_REF, and that group's prefix is optional with no
+# left anchor — so the substring became extractable and every consumer referencing the
+# canonical repo BY PATH got advisory findings on its own conformance workflow.
+#
+# ⚠ These fixtures are drawn from THE RULE'S OWN REPO PATH, not from a consumer's.
+# Every fixture in #15 and #16 came from a consumer artifact, and no consumer referenced
+# the canonical repo's path until adoption — so the fixture population COULD NOT EXHIBIT
+# the defect. A rule meant to be adopted needs a fixture of the shape adoption creates.
+# ---------------------------------------------------------------------------
+
+CANONICAL_USES = (
+    "Digital-Frontier-LDA/akash-github-runner/.github/workflows/"
+    "reusable-akash-runner-conformance.yml@297ec"
+)
+
+
+def test_the_rules_own_repo_path_is_not_a_runner_image() -> None:
+    """The substring in `akash-github-runner` must not be extracted as an image."""
+    assert mod._runner_images(CANONICAL_USES) == []
+    assert (
+        mod.findings(yaml.safe_load(f"jobs:\n  c:\n    uses: {CANONICAL_USES}\n")) == []
+    )
+
+
+def test_the_substring_is_rejected_even_under_an_image_key() -> None:
+    """The dict-path site used a bare `in` test and had the same defect."""
+    assert mod._runner_images({"image": CANONICAL_USES}) == []
+
+
+def test_a_real_reference_beside_the_substring_is_still_found() -> None:
+    """⭐ Discrimination, not suppression — a rule that rejected BOTH would also pass
+    the two tests above and be useless."""
+    found = mod._runner_images(f"{CANONICAL_USES}\n          image: {GOOD_IMAGE}")
+    assert found == [GOOD_IMAGE]
+
+
+def test_the_extracted_reference_still_carries_its_digest() -> None:
+    """⛔ THE AXIS A MATCH/NO-MATCH TABLE CANNOT SEE.
+
+    A boundary built as a *lookahead* (`(?=[@:/\\s\"']|$)`) instead of a trailing
+    negative lookbehind also kills the substring — and strips the tag and digest from
+    every extracted reference, because they fall outside the match. `_RUNNER_RE` then
+    sees a bare name and reports the CANONICAL references as floating. Measured: the
+    lookahead form extracts 'myoung34/github-runner' from the artifact above.
+
+    Asserting "does it match" would pass for both designs. Assert the payload.
+    """
+    assert mod._runner_images(GOOD_IMAGE) == [GOOD_IMAGE]
+    assert mod._runner_images(
+        f"ghcr.io/akash-network/github-runner@sha256:{'7' * 64}"
+    ) == [f"ghcr.io/akash-network/github-runner@sha256:{'7' * 64}"]
+
+
+def test_a_bare_reference_at_the_end_of_an_interior_line_is_still_seen() -> None:
+    """The mirror defect: a terminator LIST plus `$` misses this without re.M."""
+    assert mod._runner_images("image: github-runner\nnext: 1") == ["github-runner"]
+
+
+def test_a_longer_image_name_ending_in_the_runner_name_is_not_a_match() -> None:
+    assert mod._runner_images("github-runner-extra:1.0") == []
