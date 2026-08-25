@@ -169,9 +169,37 @@ def _check_pool_contract(document: dict[str, Any]) -> list[str]:
     return findings
 
 
-def check(
-    document: dict[str, Any], target_kind: str = "auto"
-) -> list[str]:
+# ⛔ THE THIRD SHAPE (#11). The standard had exactly two categories -- `pool` (it IS the
+# canonical just-akash runner pool) and `consumer` (it `uses:` that pool). A workflow that
+# SPENDS MONEY ON AKASH LEASES WITHOUT CONSUMING THE CANONICAL POOL fits neither, so
+# `--target-kind auto` calls it a consumer and reports "no canonical just-akash runner-pool
+# reusable job found" -- a true statement about a pool it was never supposed to have.
+#
+# The honest move today is to point nothing at such a file, and then NOTHING JUDGES IT. A
+# workflow that opens and closes leases is spending money; that is exactly what this standard
+# should have an opinion about. df-cicd#1553 measured 484 ACT left in unclosed orders behind
+# this shape.
+#
+# ⚠ THE CATEGORY MUST NOT BECOME AN ESCAPE HATCH. Declaring this kind suppresses the pool
+# requirement, so a real consumer could silence a genuine finding by mislabelling itself. The
+# declaration is CHECKED, not trusted: a file claiming it must show lease-lifecycle evidence,
+# and one that shows none is REPORTED, not passed.
+_LEASE_EVIDENCE = re.compile(
+    r"(just-akash\s+close|akash\s+close|/v1/deployments/|\bdseq\b|close_deployment)",
+    re.I,
+)
+
+
+def _spends_on_leases(document: dict[str, Any]) -> bool:
+    """Does this workflow manage Akash lease lifecycle at all?
+
+    Deliberately broad: the question is "is this the third shape", not "is its teardown
+    correct" -- the teardown rules judge that, and they run regardless of target kind.
+    """
+    return bool(_LEASE_EVIDENCE.search(json.dumps(document, default=str)))
+
+
+def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
     findings: list[str] = []
     jobs = document.get("jobs") or {}
     pools = {
@@ -196,6 +224,20 @@ def check(
     # ⇒ POOL MODE. Consumer mode is everything below and is unchanged; this branch only
     # ever engages for a document that is itself the canonical pool. `auto` errs toward
     # consumer mode, so an unrecognised file keeps today's behaviour exactly.
+    # ⇒ LEASE-SPENDER MODE (#11). The teardown rules above have already run -- they sit
+    # before the pool gate precisely so they fire without a pool. This branch only
+    # declines to demand a pool the file was never meant to have.
+    if target_kind == "lease-spender":
+        if not _spends_on_leases(document):
+            # ⛔ NOT a pass. A file declaring this kind with no lease-lifecycle evidence
+            # is mislabelled, or is using the category to silence the pool finding.
+            findings.append(
+                "declared --target-kind lease-spender but no Akash lease lifecycle "
+                "found (no close call, no dseq, no deployment delete) — this file is "
+                "not the third shape and the declaration suppresses a real finding"
+            )
+        return findings
+
     if target_kind == "pool" or (
         target_kind == "auto" and not pools and _looks_like_the_canonical_pool(document)
     ):
@@ -336,7 +378,7 @@ def main() -> int:
     parser.add_argument("workflow", type=Path)
     parser.add_argument(
         "--target-kind",
-        choices=("auto", "consumer", "pool"),
+        choices=("auto", "consumer", "pool", "lease-spender"),
         default="auto",
         help=(
             "What the workflow file IS. 'consumer' calls the canonical pool; 'pool' is "
