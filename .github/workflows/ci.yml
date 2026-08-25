@@ -51,3 +51,34 @@ jobs:
 
       - name: Run the rule suite
         run: python -m pytest akash_runner -q
+
+  dogfood:
+    name: self-conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false }
+
+      # ⭐ THE RULES RUN AGAINST THIS REPO'S OWN WORKFLOWS.
+      #
+      # A standard that exempts itself is not a standard. `df-akash-gate.yml`
+      # lives here and is a runner-lifecycle workflow like any consumer's — it
+      # is also the single repo-wide instance `check_teardown_cannot_be_silenced`
+      # flags (`just-akash close "$DSEQ" 2>/dev/null || true`). Checking it here
+      # means the finding is visible in this repo's own CI rather than only in
+      # somebody else's.
+      #
+      # ⚠ `workflows-dir` IS SET, deliberately. TEN rules are gated behind it and
+      # THREE of them are ENFORCING (dereg_backstop, backstop_covers_producers,
+      # context_properties_exist). Omitting it is how a consumer runs a subset
+      # and reads green — the exact gap this repo exists to close. Dogfooding
+      # without it would demonstrate the defect instead of catching it.
+      #
+      # Uses the LOCAL action, not the reusable: a repo checking itself already
+      # has the checker on disk, and this keeps the dogfood independent of the
+      # reusable's own input surface.
+      - uses: ./.github/actions/akash-runner-conformance
+        with:
+          workflow: .github/workflows/df-akash-gate.yml
+          workflows-dir: .github/workflows
