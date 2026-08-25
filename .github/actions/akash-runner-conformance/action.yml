@@ -141,6 +141,7 @@ runs:
           check_test_pins_a_literal.py
           check_pool_not_before_consumers.py
           check_runner_image_digest_floor.py
+          check_conformance_pin_agrees_with_checker_ref.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -219,6 +220,16 @@ runs:
           advisory check_unvalidated_default.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_funding_projection_is_quantised.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_teardown_cannot_be_silenced.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ `uses:@sha` picks the CONTRACT, `checker-ref` picks the CHECKER. Two
+          # declarations of one decision, and the invariant lived only in a comment in
+          # the caller's own file. A half-bump runs an old contract against a new
+          # checker (or the reverse); both SHAs resolve and the job goes green, so
+          # nothing else reports it. Measured 2026-08-25: both consumers had a STALE
+          # pin (df-cicd#186, just-akash#209) — this rule catches the repair going
+          # half-done, which is the likely next instance now that both were bumped by
+          # hand. ⚠ It checks AGREEMENT, not CURRENCY: staleness needs the upstream
+          # default branch, which a local rule cannot see.
+          advisory check_conformance_pin_agrees_with_checker_ref.py "$WORKFLOWS_DIR"
           # ⛔ A test that pins the SHAPE of the defect it is supposed to detect
           # — assertion body holds the literal `job.workflow_sha` /
           # `./.github/actions/foo` while the message describes a general
