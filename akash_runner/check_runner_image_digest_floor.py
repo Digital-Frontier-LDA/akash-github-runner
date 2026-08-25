@@ -47,11 +47,25 @@ _RUNNER_RE = re.compile(
 # the other two blind, so the rule reported NOT APPLICABLE on just-akash -- whose
 # reference is ghcr.io/akash-network/github-runner@sha256:... with NO tag -- on both
 # its defective and its fixed state. All three now accept name@digest.
+# ⛔ #18: the prefix group is OPTIONAL and there was NO LEFT ANCHOR, so `github-runner`
+# matched INSIDE `akash-github-runner` -- this rule's own repo name. Every consumer that
+# referenced the canonical repo by path got 2 advisory findings on its own conformance
+# workflow, on every run. Widening the three sites in #16 to accept name@digest fixed a
+# false NEGATIVE and created this false POSITIVE: a matcher has two error rates and only
+# one was measured.
+# The fix is BOTH SIDES, and symmetric -- a negative lookahead for identifier characters
+# rather than a list of permitted terminators, because enumerating terminators is what
+# makes a boundary miss `github-runner` at the end of an interior line.
+# ⚠ The tag and digest groups MUST stay INSIDE the match. Replacing them with a
+# lookahead also kills the substring, but strips the digest from every extracted
+# reference -- and _RUNNER_RE then reports the canonical refs as FLOATING. Measured.
 _IMAGE_REF = re.compile(
+    r"(?<![A-Za-z0-9_\-])"
     r"(?:[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*/)?"
     r"github-runner"
     r"(?::[^\s\"'<>`@]+)?"
     r"(?:@sha256:[0-9a-fA-F]{64})?"
+    r"(?![A-Za-z0-9_\-])"
 )
 _VERSION_RE = re.compile(r"^(?P<version>\d+\.\d+\.\d+)(?:-|$)")
 
@@ -63,7 +77,10 @@ def _runner_images(value: object) -> list[str]:
     if isinstance(value, dict):
         images: list[str] = []
         for key, child in value.items():
-            if key == "image" and isinstance(child, str) and "github-runner" in child:
+            # ⛔ #18: this was a bare `"github-runner" in child` substring test -- the SAME
+            # defect as _IMAGE_REF, in the second of the three sites. Use the one
+            # predicate so all sites agree on what a runner reference IS.
+            if key == "image" and isinstance(child, str) and _IMAGE_REF.search(child):
                 images.append(child.strip())
                 continue
             images.extend(_runner_images(child))
@@ -78,12 +95,20 @@ def _runner_images(value: object) -> list[str]:
 
 def _source_runner_images(text: str) -> list[str]:
     """Find references in YAML and embedded SDL, excluding prose comments."""
-    return _runner_images("\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#")))
+    return _runner_images(
+        "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+    )
 
 
 def _version(tag: str) -> tuple[int, int, int] | None:
     match = _VERSION_RE.match(tag)
-    return tuple(int(part) for part in match.group("version").split(".")) if match else None
+    return (
+        tuple(int(part) for part in match.group("version").split("."))
+        if match
+        else None
+    )
 
 
 def findings(document: dict | str) -> list[str]:
@@ -101,10 +126,14 @@ def findings(document: dict | str) -> list[str]:
         tag = match.group("tag")
         version = _version(tag) if tag else None
         if not match.group("digest"):
-            out.append(f"runner image {image!r} is floating; pin it with @sha256:<digest>")
+            out.append(
+                f"runner image {image!r} is floating; pin it with @sha256:<digest>"
+            )
             continue
         if version is None:
-            out.append(f"runner image {image!r} has a digest but no verifiable version tag")
+            out.append(
+                f"runner image {image!r} has a digest but no verifiable version tag"
+            )
             continue
         if version < SUPPORTED_FLOOR:
             floor = ".".join(map(str, SUPPORTED_FLOOR))
@@ -123,7 +152,11 @@ def check_workflow(path: Path) -> list[str]:
         return [f"{path}: invalid YAML: {exc}"]
     # Scan the source text as well as parsed YAML: SDL is commonly embedded in
     # a shell heredoc, where YAML parsing turns the whole block into one scalar.
-    return findings("\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#")))
+    return findings(
+        "\n".join(
+            line for line in text.splitlines() if not line.lstrip().startswith("#")
+        )
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
