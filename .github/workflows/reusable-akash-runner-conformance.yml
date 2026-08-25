@@ -49,14 +49,22 @@ on:
         type: string
       workflows-dir:
         description: >-
-          OPTIONAL. Directory of workflows for the DIRECTORY-SCOPED rules: backstop
-          existence, reaper cadence, producer coverage, funding-gate re-derivation,
-          schedule inputs.
+          OPTIONAL. Directory of workflows for the DIRECTORY-SCOPED rules.
 
-          ⛔ WITHOUT THIS THOSE RULES CANNOT RUN. The composite action gates six checks
-          behind `[ -n "$WORKFLOWS_DIR" ]`, and this reusable had no input to set it --
-          so every consumer of the supported path ran 8 of 14 rules and nothing reported
-          which six were skipped. Those six are the registration-leak rules.
+          WITHOUT THIS THOSE RULES CANNOT RUN. The composite action gates them
+          behind `[ -n "$WORKFLOWS_DIR" ]`, and this reusable had no input to set
+          it -- so every consumer of the supported path ran a SUBSET and nothing
+          said which rules were skipped.
+
+          The count is deliberately NOT written here. It was measured at TEN
+          gated rules, THREE of them ENFORCING -- and an earlier draft of this
+          description said "six" and then listed five, which is exactly how a
+          hand-maintained count rots. The authoritative list is generated from
+          DIR_SCOPED_ENFORCING / DIR_SCOPED_ADVISORY in the composite action and
+          announced by it at run time; read that, not a number typed here.
+
+          Leave empty only if the repo provisions no runners -- the action will
+          then tell you, by name, which rules it skipped.
         required: false
         default: ""
         type: string
