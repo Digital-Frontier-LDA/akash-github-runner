@@ -62,10 +62,26 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
+    "check_conformance_pin_agrees_with_checker_ref.py": (
+        "ADVISORY because it CANNOT YET RUN ON ANY CONSUMER. Both consumers pin the "
+        "checker at 6ba4316, which PREDATES this rule, so it is absent at the SHA they "
+        "execute — the same absence that made three other rules unreachable and was "
+        "fixed by hand in df-cicd#186 and just-akash#209. Enforcing a rule nobody runs "
+        "would be a promotion on paper. "
+        "⚠ Its promotion condition therefore NAMES that dependency instead of assuming "
+        "it away: a condition of the form 'goes green on a consumer' is UNSATISFIABLE "
+        "while the consumer pins a SHA without the rule, and one was filed in exactly "
+        "that unreachable form earlier today. "
+        "PROMOTE WHEN: a consumer's `uses:@sha` AND `checker-ref` have both advanced to "
+        "a SHA that CONTAINS this file, AND the rule has reported OK (not NOT-JUDGEABLE) "
+        "on at least one real conformance run there. Blast radius already measured at "
+        "zero across all four repos: just-akash OK, df-cicd OK, akash-github-runner and "
+        "Blazing-Back NOT-JUDGEABLE (no caller)."
+    ),
     "check_teardown_cannot_be_silenced.py": (
         "ADVISORY until every consumer has been scanned. It currently finds exactly ONE "
-        "instance repo-wide -- df-akash-gate.yml:82, `[ -n \"${DSEQ:-}\" ] && just-akash "
-        "close \"$DSEQ\" 2>/dev/null || true` -- which is a genuine guaranteed no-op: there "
+        'instance repo-wide -- df-akash-gate.yml:82, `[ -n "${DSEQ:-}" ] && just-akash '
+        'close "$DSEQ" 2>/dev/null || true` -- which is a genuine guaranteed no-op: there '
         "is no just-akash package on PyPI, so the install two lines up (also silenced) has "
         "never placed a binary, and the shell shape exits 0 in all three failure modes. "
         "Mutation-verified on three limbs, each killed by its own known-negative. "
@@ -94,7 +110,7 @@ ADVISORY: dict[str, str] = {
         "stops a broken preflight from skipping a required check. Exemption is now a JOB "
         "property closed over `needs:`, and deliberately not file-level. (2) A bare "
         "`resources.requests` read matched a yq assignment AUTHORING a manifest "
-        "(`.resources.requests.cpu = \"100m\"`); it now requires co-occurrence with an "
+        '(`.resources.requests.cpu = "100m"`); it now requires co-occurrence with an '
         "actual cluster query. ⛔ The second was nearly invisible: with the preflight "
         "wired the job became needs-exempt, so the rule went green and the before/after "
         "read like proof it worked. Only printing the MATCH showed the finding was never "
