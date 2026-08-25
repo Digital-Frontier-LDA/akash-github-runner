@@ -27,6 +27,7 @@ def _triggers(document: dict) -> dict:
     return document.get(True) or document.get("on") or {}
 
 
+
 def test_workflow_exists_and_parses():
     document = _workflow()
     assert isinstance(document, dict), "workflow must be a YAML mapping"
@@ -39,11 +40,44 @@ def test_workflow_uses_workflow_call_trigger():
     )
 
 
-def test_workflow_inputs_require_a_workflow_path():
+def test_workflow_inputs_MIRROR_the_action_they_wrap():
+    """The reusable must not be stricter than the action it delegates to.
+
+    ⛔ THIS TEST USED TO ASSERT `workflow.required is True`, AND THAT PINNED A
+    MISWIRING. `action.yml` declares `workflow` as `required: false, default: ""`
+    and guards check_standard with `if [ -n "${WORKFLOW:-}" ]` -- i.e. the action
+    already supports directory-scoped-only adoption. Requiring it HERE meant a
+    consumer calling the supported path could not SELECT a mode the action
+    implements.
+
+    Measured cost on df-cicd: check_standard is ENFORCING and exits 1 on every one
+    of its workflows, because that repo is neither the canonical pool nor a pool
+    consumer. Requiring `workflow` forced a choice between adopting with a
+    PERMANENT FALSE RED, or not adopting at all -- while 10 dir-scoped rules over
+    25 workflows were sitting there, 8 passing non-vacuously and 2 reporting real
+    advisory defects.
+
+    ⚠ The property that actually matters is NOT metadata -- it is that the action
+    never green-ticks without examining something. That is asserted where it is
+    enforced, at runtime, by `test_conformance_action_cannot_judge_NOTHING`, which
+    also covers the both-inputs-absent case `required: true` never covered at all.
+    """
     triggers = _triggers(_workflow())
     inputs = (triggers.get("workflow_call") or {}).get("inputs") or {}
-    assert "workflow" in inputs, "workflow input is required so the action has a target file"
-    assert inputs["workflow"].get("required") is True, "workflow input must be required"
+    action = _action().get("inputs") or {}
+
+    assert "workflow" in inputs, "the reusable must still ACCEPT a workflow target"
+    for name in ("workflow", "workflows-dir"):
+        assert inputs[name].get("required") == action[name].get("required"), (
+            f"reusable and action disagree on `{name}.required`: "
+            f"reusable={inputs[name].get('required')} action={action[name].get('required')}. "
+            "The reusable must not be stricter than the action it wraps."
+        )
+
+    assert inputs["checker-ref"].get("required") is True, (
+        "checker-ref MUST stay required: a default lets the checker drift from the "
+        "contract its @ pin names"
+    )
 
 
 def test_workflow_calls_the_conformance_action():
