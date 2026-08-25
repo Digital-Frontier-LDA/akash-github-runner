@@ -20,7 +20,7 @@
 # CONSUMER CALL SITE (pin df-cicd to an immutable tag):
 #   jobs:
 #     reap-stale-runners:
-#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@13ba1b441cf9b7a2406d8df813d579729c1f0890 # df-cicd main
+#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@3e82b18132c39b80a1afaf3d1e7a65453cf73c7d # df-cicd main
 #       with:
 #         org: my-org
 #         name-prefixes: akash-ci-,akash-integration-

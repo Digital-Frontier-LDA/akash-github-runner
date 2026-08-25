@@ -58,7 +58,7 @@ def test_workflow_calls_the_conformance_action():
 
     ⇒ Assert the PROPERTY — the conformance action is invoked, by a local path —
     not the one literal that happened to be there. The companion
-    `test_workflow_checks_out_df_cicd_itself` pins WHERE that path must come from.
+    `test_workflow_checks_out_akash_github_runner_itself` pins WHERE that path must come from.
     """
     jobs = _workflow().get("jobs") or {}
     assert jobs, "reusable workflow must define at least one job"
@@ -75,13 +75,13 @@ def test_workflow_calls_the_conformance_action():
     )
     assert not any(u == "./.github/actions/akash-runner-conformance" for u in local), (
         "a bare `./.github/actions/...` resolves inside the CALLER's tree, which has no "
-        "such directory — that is #149. Check out df-cicd to a path and reference it "
+        "such directory — that is #149. Check out akash-github-runner to a path and reference it "
         "from there."
     )
 
 
-def test_workflow_checks_out_df_cicd_itself():
-    """The action must come from df-cicd, at a revision the CALLER pins.
+def test_workflow_checks_out_akash_github_runner_itself():
+    """The action must come from akash-github-runner, at a revision the CALLER pins.
 
     Without an explicit `repository:` the checkout fetches the caller's repo, and the
     action is simply absent. And the ref cannot be derived — no context exposes a
@@ -99,11 +99,11 @@ def test_workflow_checks_out_df_cicd_itself():
     )
     steps = [s for job in (wf.get("jobs") or {}).values() for s in (job.get("steps") or [])]
     ck = [s for s in steps if isinstance(s.get("uses"), str) and "actions/checkout" in s["uses"]]
-    ours = [s for s in ck if (s.get("with") or {}).get("repository", "").endswith("/df-cicd")]
-    assert ours, f"one checkout must name df-cicd explicitly (found {[(s.get('with') or {}).get('repository') for s in ck]})"
+    ours = [s for s in ck if (s.get("with") or {}).get("repository", "").endswith("/akash-github-runner")]
+    assert ours, f"one checkout must name akash-github-runner explicitly (found {[(s.get('with') or {}).get('repository') for s in ck]})"
     w = ours[0]["with"]
-    assert "checker-ref" in str(w.get("ref", "")), "the df-cicd checkout must use inputs.checker-ref"
-    assert w.get("path"), "the df-cicd checkout needs its own path so it does not clobber the caller's tree"
+    assert "checker-ref" in str(w.get("ref", "")), "the akash-github-runner checkout must use inputs.checker-ref"
+    assert w.get("path"), "the akash-github-runner checkout needs its own path so it does not clobber the caller's tree"
 
 
 def test_conformance_action_is_a_composite_action():

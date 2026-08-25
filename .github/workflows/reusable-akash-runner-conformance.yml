@@ -27,7 +27,7 @@
 # Consumer call site (⛔ pin df-cicd by 40-hex COMMIT SHA, never a tag — see #147):
 #   jobs:
 #     runner-conformance:
-#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-runner-conformance.yml@13ba1b441cf9b7a2406d8df813d579729c1f0890 # df-cicd main
+#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-runner-conformance.yml@3e82b18132c39b80a1afaf3d1e7a65453cf73c7d # df-cicd main
 #       with:
 #         workflow: .github/workflows/ci-pr.yml
 #         checker-ref: 13ba1b441cf9b7a2406d8df813d579729c1f0890  # SAME sha as the @pin above
