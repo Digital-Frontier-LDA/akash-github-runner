@@ -14,8 +14,16 @@ description: Validate a consumer workflow against the leak-safe DF Akash runner 
 
 inputs:
   workflow:
-    description: Workflow file containing pool, work, and teardown jobs.
-    required: true
+    description: >-
+      Workflow file containing pool, work, and teardown jobs. OPTIONAL: several rules
+      judge the DIRECTORY and need no single file, so a repo with no canonical-pool
+      consumer — one that only hosts the reusables, say — can still run the repo-scoped
+      half. Omitting it SKIPS the workflow-scoped rules and says so at warning level; it
+      does not pass them. The exact set is listed in WORKFLOW_SCOPED_ENFORCING /
+      WORKFLOW_SCOPED_ADVISORY below and named in the skip warning; do not restate it
+      here, it drifts.
+    required: false
+    default: ""
   workflows-dir:
     description: >-
       The consumer's .github/workflows directory. Several rules judge the REPO rather
@@ -43,13 +51,16 @@ runs:
         # invocation is guarded and the action fails once at the end with everything named.
         rc=0
 
-        # ── ENFORCING ─────────────────────────────────────────────────────────────────
-        python3 "$ROOT/check_standard.py" -- "$WORKFLOW" || rc=1
-        # A teardown that always runs and receives nothing is reachable, and inert. The
-        # shape check above cannot see WHEN the lease identity is published; this one can.
-        # Measured: it separates just-akash before and after 53515bc, and rejects the
-        # Blazing-Back#1468 shape that billed two deployments for 32 hours.
-        python3 "$ROOT/check_teardown_can_identify.py" "$WORKFLOW" || rc=1
+        # ⛔ SINGLE SOURCE OF TRUTH FOR THE WORKFLOW-SCOPED RULES. Same contract as the
+        # dir-scoped arrays below: the skip warning is BUILT from these, never retyped,
+        # and akash_runner/test_skipped_rules_are_announced.py pins the RELATIONSHIP.
+        WORKFLOW_SCOPED_ENFORCING=(
+          check_standard.py
+          check_teardown_can_identify.py
+        )
+        WORKFLOW_SCOPED_ADVISORY=(
+          check_pool_owns_teardown.py
+        )
 
         # ── ADVISORY ──────────────────────────────────────────────────────────────────
         # ⚠ REPORTED, NOT ENFORCED — ON PURPOSE, AND NOT FOREVER. These three have never
@@ -72,7 +83,34 @@ runs:
           fi
         }
 
-        advisory check_pool_owns_teardown.py "$WORKFLOW"
+        # ⛔ AT LEAST ONE TARGET, OR THE ACTION JUDGES NOTHING AND EXITS 0. Both inputs
+        # empty is the vacuous pass this repo exists to prevent: a green tick over an
+        # empty verdict. Fail loudly instead.
+        if [ -z "${WORKFLOW:-}" ] && [ -z "${WORKFLOWS_DIR:-}" ]; then
+          echo "::error title=akash-runner-conformance judged NOTHING::Neither \`workflow\` nor \`workflows-dir\` was supplied, so every rule was skipped and this job would have passed without examining anything. Supply at least one."
+          exit 1
+        fi
+
+        # ── ENFORCING / ADVISORY, workflow-scoped ─────────────────────────────────────
+        if [ -n "${WORKFLOW:-}" ]; then
+          python3 "$ROOT/check_standard.py" -- "$WORKFLOW" || rc=1
+          # A teardown that always runs and receives nothing is reachable, and inert. The
+          # shape check above cannot see WHEN the lease identity is published; this one can.
+          # Measured: it separates just-akash before and after 53515bc, and rejects the
+          # Blazing-Back#1468 shape that billed two deployments for 32 hours.
+          python3 "$ROOT/check_teardown_can_identify.py" "$WORKFLOW" || rc=1
+          advisory check_pool_owns_teardown.py "$WORKFLOW"
+        else
+          # Same reasoning as the dir-scoped announcement below: a skipped rule that
+          # reports nothing is indistinguishable from one that passed, and two of these
+          # FAIL THE BUILD when they run.
+          printf -v wf_skipped_enforcing '%s, ' "${WORKFLOW_SCOPED_ENFORCING[@]}"
+          printf -v wf_skipped_advisory  '%s, ' "${WORKFLOW_SCOPED_ADVISORY[@]}"
+          wf_skipped_enforcing=${wf_skipped_enforcing%, }
+          wf_skipped_advisory=${wf_skipped_advisory%, }
+          wf_skipped_total=$(( ${#WORKFLOW_SCOPED_ENFORCING[@]} + ${#WORKFLOW_SCOPED_ADVISORY[@]} ))
+          echo "::warning title=${wf_skipped_total} workflow-scoped rules were NOT run::No \`workflow\` input was supplied, so ${wf_skipped_total} rules that judge a SINGLE workflow file were SKIPPED, not passed. ${#WORKFLOW_SCOPED_ENFORCING[@]} of them are ENFORCING and would fail this build if they ran: ${wf_skipped_enforcing}. The rest are advisory: ${wf_skipped_advisory}. This job's green tick does NOT cover them. Pass \`workflow: <path>\` to run them."
+        fi
 
         # ⛔ SINGLE SOURCE OF TRUTH FOR THE DIR-SCOPED RULES. The skip warning below is
         # BUILT from these two arrays, never retyped. The previous notice was a

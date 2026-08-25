@@ -69,14 +69,27 @@ jobs:
 
       # ⭐ THE RULES RUN AGAINST THIS REPO'S OWN WORKFLOWS.
       #
-      # A standard that exempts itself is not a standard. `df-akash-gate.yml`
-      # lives here and is a runner-lifecycle workflow like any consumer's — it
-      # is also the single repo-wide instance `check_teardown_cannot_be_silenced`
-      # flags (`just-akash close "$DSEQ" 2>/dev/null || true`). Checking it here
-      # means the finding is visible in this repo's own CI rather than only in
-      # somebody else's.
+      # A standard that exempts itself is not a standard.
       #
-      # ⚠ `workflows-dir` IS SET, deliberately. TEN rules are gated behind it and
+      # ⛔ NO `workflow:` TARGET, DELIBERATELY. The previous version passed
+      # `df-akash-gate.yml` on the stated premise that it "is a runner-lifecycle workflow
+      # like any consumer's". MEASURED, AND FALSE: it is a `workflow_call` gate on
+      # ubuntu-latest that manages Akash lease lifecycle but never `uses:` a canonical
+      # runner-pool reusable, so `--target-kind auto` classifies it a consumer and
+      # correctly reports "no canonical just-akash runner-pool reusable job found". The
+      # rule was right; the comment was wrong and the target followed the comment. That
+      # is the defect class this repo exists to catch, shipped into its own dogfood.
+      #
+      # This repo hosts the reusables and has NO canonical-pool consumer to point at.
+      # Naming one that is not a consumer would be a false claim; passing
+      # `--target-kind pool` would be another, since that file is not the pool either.
+      # So the workflow-scoped rules are SKIPPED — and the action says so at warning
+      # level, naming each one, because skipped is not passed.
+      #
+      # The dir-scoped half is the half that matters here anyway: check_dereg_backstop,
+      # check_backstop_covers_producers and check_context_properties_exist are the
+      # registration-leak rules, they judge the DIRECTORY, and they are why this job
+      # exists. Add a `workflow:` here the day this repo gains a real consumer.
       # THREE of them are ENFORCING (dereg_backstop, backstop_covers_producers,
       # context_properties_exist). Omitting it is how a consumer runs a subset
       # and reads green — the exact gap this repo exists to close. Dogfooding
@@ -87,5 +100,4 @@ jobs:
       # reusable's own input surface.
       - uses: ./.github/actions/akash-runner-conformance
         with:
-          workflow: .github/workflows/df-akash-gate.yml
           workflows-dir: .github/workflows
