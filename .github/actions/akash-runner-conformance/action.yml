@@ -139,6 +139,7 @@ runs:
           check_teardown_cannot_be_silenced.py
           check_test_pins_a_literal.py
           check_pool_not_before_consumers.py
+          check_runner_image_digest_floor.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -214,6 +215,7 @@ runs:
           # (ADVISORY entry).
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_pool_not_before_consumers.py --workflows-dir "$WORKFLOWS_DIR"
+          advisory check_runner_image_digest_floor.py --workflows-dir "$WORKFLOWS_DIR"
         else
           # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
           # reports nothing is indistinguishable from a rule that passed. `::notice` is

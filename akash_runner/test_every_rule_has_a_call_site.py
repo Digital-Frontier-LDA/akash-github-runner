@@ -171,6 +171,13 @@ ADVISORY: dict[str, str] = {
         "at bc3819e30. PROMOTE WHEN: every consumer's pool jobs have an explicit "
         "!cancelled() policy and remaining always() warnings are dispositioned."
     ),
+    "check_runner_image_digest_floor.py": (
+        "ADVISORY until each consumer's runner image inventory has been measured. It "
+        "requires immutable digests and a supported version floor; the known-positive "
+        "is Blazing-Back's 2.336.0 digest at akash-runner.yml:852 and "
+        "runner-time-to-ready.yml:150. PROMOTE WHEN: all consumer references have "
+        "been audited and any below-floor deployment path has a runtime fail-fast."
+    ),
     "check_reaper_schedule.py": (
         "Same — repo-scoped, blast radius unmeasured. PROMOTE WHEN: it has run advisory "
         "across the consumer set and the findings are either fixed or accepted."
