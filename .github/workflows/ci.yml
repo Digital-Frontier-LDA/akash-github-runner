@@ -1,0 +1,84 @@
+# ⛔ THIS REPO SHIPPED WITHOUT CI AND ITS OWN TESTS NEVER RAN.
+#
+# Both existing workflows are `workflow_call` only — zero `pull_request` or
+# `push` triggers — so the 323-test suite under `akash_runner/` was executed by
+# nobody. `grep -rn pytest .github/` returned nothing.
+#
+# ⭐ The repo contains `test_every_rule_has_a_call_site.py`, written on the
+# principle that *a test proves the rule WORKS; only the call site proves it
+# RUNS*. Without this file that principle failed one level up: the rules had
+# call sites and the tests guarding them did not. The founding defect, applied
+# to the founder.
+#
+# ⚠ `main` is RED on arrival — 6 failures, all artifacts of the df-cicd split
+# (published refs still naming df-cicd@13ba1b4, a reusable absent from
+# CONSUMERS.md, a checkout-identity assertion, and the population guard). They
+# are NOT introduced here and NOT silently fixed here. This workflow is
+# deliberately landed FIRST so that the fix for those six cannot regress the
+# moment it lands — which is exactly what happens when the fix and the gate
+# arrive together.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Per-ref, cancel superseded runs. Safe here: this job provisions NOTHING —
+  # no leases, no runners, no escrow. Cancelling it cannot leak anything.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: rule tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false }
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'   # matches the CI interpreter used across the fleet
+
+      - name: Install test deps
+        run: python -m pip install --quiet pytest pyyaml
+
+      - name: Run the rule suite
+        run: python -m pytest akash_runner -q
+
+  dogfood:
+    name: self-conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with: { persist-credentials: false }
+
+      # ⭐ THE RULES RUN AGAINST THIS REPO'S OWN WORKFLOWS.
+      #
+      # A standard that exempts itself is not a standard. `df-akash-gate.yml`
+      # lives here and is a runner-lifecycle workflow like any consumer's — it
+      # is also the single repo-wide instance `check_teardown_cannot_be_silenced`
+      # flags (`just-akash close "$DSEQ" 2>/dev/null || true`). Checking it here
+      # means the finding is visible in this repo's own CI rather than only in
+      # somebody else's.
+      #
+      # ⚠ `workflows-dir` IS SET, deliberately. TEN rules are gated behind it and
+      # THREE of them are ENFORCING (dereg_backstop, backstop_covers_producers,
+      # context_properties_exist). Omitting it is how a consumer runs a subset
+      # and reads green — the exact gap this repo exists to close. Dogfooding
+      # without it would demonstrate the defect instead of catching it.
+      #
+      # Uses the LOCAL action, not the reusable: a repo checking itself already
+      # has the checker on disk, and this keeps the dogfood independent of the
+      # reusable's own input surface.
+      - uses: ./.github/actions/akash-runner-conformance
+        with:
+          workflow: .github/workflows/df-akash-gate.yml
+          workflows-dir: .github/workflows
