@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: ./.github/actions/sops-env
         with: { file: "secrets/prod.sops.env", age_key_env: SOPS_AGE_KEY_FILE }
         env: { SOPS_AGE_KEY_FILE: "${{ secrets.SOPS_AGE_KEY_FILE }}" }
@@ -53,7 +53,13 @@ jobs:
           printf '{"repo":"%s","run_id":"%s","attempt":"%s","engagement_id":"%s","max_ttl_min":%s,"target":"%s","status":"provisioning"}\n' \
             "$REPO" "$RUN" "$ATTEMPT" "$eid" "$TTL" "$TARGET" > lease-manifest.json
           echo "eid=$eid" >> "$GITHUB_OUTPUT"
-          pipx install just-akash 2>/dev/null || pip install just-akash 2>/dev/null || true
+          # A SILENT INSTALL MAKES THE TEARDOWN BELOW UNREACHABLE. The old line ended
+          # in `|| true`, so a package that 404s on PyPI produced a green step and a
+          # `just-akash` that does not exist -- and the close further down then failed
+          # for a reason nothing recorded.
+          if ! pipx install just-akash 2>/dev/null && ! pip install just-akash 2>/dev/null; then
+            echo "::error title=just-akash NOT installed::teardown cannot close anything this run"
+          fi
 
       - name: Dispatch engagement on an ephemeral Akash lease
         id: run
@@ -79,5 +85,19 @@ jobs:
           DSEQ: ${{ steps.run.outputs.dseq }}
         run: |
           # Guaranteed teardown regardless of what happened inside the lease. Idempotent.
-          [ -n "${DSEQ:-}" ] && just-akash close "$DSEQ" 2>/dev/null || true
+          # THE ONE INSTANCE check_teardown_cannot_be_silenced.py FLAGS repo-wide.
+          # The old line exited 0 in ALL THREE failure modes -- no dseq, close refused,
+          # just-akash absent -- under a comment promising a "guaranteed teardown".
+          # A close that cannot fail cannot be trusted to have run, and this one closes
+          # a BILLABLE lease. shellcheck flags the same shape as SC2015.
+          # Still non-fatal on purpose: a teardown that reds the build teaches people to
+          # skip it. But it now ANNOUNCES -- the difference between "nothing to close"
+          # and "the close failed".
+          if [ -z "${DSEQ:-}" ]; then
+            echo "::warning title=No dseq to reap::the run published no dseq; nothing was closed"
+          elif just-akash close "$DSEQ"; then
+            echo "reaped ${DSEQ}"
+          else
+            echo "::error title=Teardown FAILED::close of ${DSEQ} failed -- the lease may still be BILLING"
+          fi
           echo "reaped ${DSEQ:-<none>}"
