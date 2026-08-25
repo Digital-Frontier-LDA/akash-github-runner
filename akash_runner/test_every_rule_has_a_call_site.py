@@ -164,6 +164,13 @@ ADVISORY: dict[str, str] = {
         "finding is either fixed or accepted-with-a-reason — i.e. the rule's hit-rate on "
         "legitimate fixture assertions is zero-unexplained, not merely unmeasured."
     ),
+    "check_pool_not_before_consumers.py": (
+        "ADVISORY while consumer workflows are being swept. It catches the liveness "
+        "hole introduced when a pool receives ordering `needs` without an explicit "
+        "status-check function; the known-positive is Blazing-Back's provision-cd-pool "
+        "at bc3819e30. PROMOTE WHEN: every consumer's pool jobs have an explicit "
+        "!cancelled() policy and remaining always() warnings are dispositioned."
+    ),
     "check_reaper_schedule.py": (
         "Same — repo-scoped, blast radius unmeasured. PROMOTE WHEN: it has run advisory "
         "across the consumer set and the findings are either fixed or accepted."
