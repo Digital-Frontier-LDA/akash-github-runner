@@ -15,6 +15,20 @@ import yaml
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
+
+# ── The pool's side of the same contract ────────────────────────────────────────────
+# Consumer mode (below) requires a consumer to PASS these inputs, MAP these secrets, and
+# dereference these outputs. Nothing verified that the pool actually OFFERS them — the
+# canonical pool was judged by no rule at all, because the locator selects jobs that
+# `uses:` the pool and a pool does not `uses:` itself (measured: just-akash#200).
+#
+# ⚠ Keep these three tuples in step with consumer mode. They are deliberately the SAME
+# names the consumer rules enforce: a contract checked on only one side is not checked.
+POOL_REQUIRED_INPUTS = ("runner-label", "tag-prefix", "github-org", "providers")
+POOL_REQUIRED_SECRETS = ("AKASH_API_KEY", "AKASH_API_KEYS", "GH_RUNNER_PAT")
+# `dseq` pairs a consumer's teardown (`needs.<pool>.outputs.dseq`); `runner-targets` is
+# what a consumer puts in runs-on. Dropping either silently breaks every consumer.
+POOL_REQUIRED_OUTPUTS = ("dseq", "runner-targets")
 # ── Teardown predicate rule ─────────────────────────────────────────────────────────
 # A job that tears down / closes / reaps a provisioned resource must not be gated on the
 # PROVISIONER'S RESULT. A provision that creates a lease and then fails or is cancelled
@@ -82,7 +96,82 @@ def _result_gated_teardowns(jobs: dict[str, Any]) -> list[str]:
     return findings
 
 
-def check(document: dict[str, Any]) -> list[str]:
+def _workflow_call(document: dict[str, Any]) -> dict[str, Any] | None:
+    """The `on: workflow_call` mapping, or None.
+
+    PyYAML parses an unquoted `on:` key as the BOOLEAN True (the YAML 1.1 y/n/on/off
+    rule), which is how every GitHub workflow in the wild is written. Reading only
+    `document["on"]` silently sees nothing on real files and the whole mode would be
+    inert — the exact vacuous-pass shape `test_no_vacuous_pass` exists to prevent.
+    """
+    triggers = document.get("on", document.get(True))
+    if not isinstance(triggers, dict):
+        return None
+    call = triggers.get("workflow_call")
+    return call if isinstance(call, dict) else None
+
+
+def _looks_like_the_canonical_pool(document: dict[str, Any]) -> bool:
+    """Whether this document IS the pool, rather than a workflow that calls one.
+
+    ⚠ NARROW ON PURPOSE, and the boundary is pinned by
+    `test_an_unrelated_reusable_workflow_is_not_mistaken_for_the_pool`. `workflow_call`
+    ALONE must not select pool mode, or every reusable workflow in the org silently
+    starts being judged against the Akash pool contract — a scope widening disguised as
+    a bug fix, which is the shape the characterisation tests in
+    test_teardown_not_result_gated.py exist to catch.
+
+    ⇒ The signature is `workflow_call` + the distinctive AKASH_API_KEY secret. It keys on
+    ONE secret while the rule then checks all three, so a pool that is missing a required
+    secret is still recognised AS a pool and told which one is missing. A signature drawn
+    from the things being checked would make every non-conforming pool undetectable —
+    the rule would pass by failing to look.
+    """
+    call = _workflow_call(document)
+    if call is None:
+        return False
+    secrets = call.get("secrets")
+    return isinstance(secrets, dict) and "AKASH_API_KEY" in secrets
+
+
+def _check_pool_contract(document: dict[str, Any]) -> list[str]:
+    """Judge the canonical pool: does it OFFER what consumer mode requires consumers use?"""
+    findings: list[str] = []
+    call = _workflow_call(document) or {}
+
+    def _declared(section: str) -> set[str]:
+        value = call.get(section)
+        return set(value) if isinstance(value, dict) else set()
+
+    inputs, secrets, outputs = (
+        _declared("inputs"),
+        _declared("secrets"),
+        _declared("outputs"),
+    )
+    for field in POOL_REQUIRED_INPUTS:
+        if field not in inputs:
+            findings.append(
+                f"pool: workflow_call does not declare input {field!r}, which consumer "
+                f"conformance requires every consumer to pass"
+            )
+    for field in POOL_REQUIRED_SECRETS:
+        if field not in secrets:
+            findings.append(
+                f"pool: workflow_call does not declare secret {field!r}, which consumer "
+                f"conformance requires every consumer to map explicitly"
+            )
+    for field in POOL_REQUIRED_OUTPUTS:
+        if field not in outputs:
+            findings.append(
+                f"pool: workflow_call does not publish output {field!r}; consumers "
+                f"dereference needs.<pool>.outputs.{field} and would break silently"
+            )
+    return findings
+
+
+def check(
+    document: dict[str, Any], target_kind: str = "auto"
+) -> list[str]:
     findings: list[str] = []
     jobs = document.get("jobs") or {}
     pools = {
@@ -103,6 +192,15 @@ def check(document: dict[str, Any]) -> list[str]:
     # below would be correct and unreachable — the same defect shape this campaign exists
     # to remove, authored into the fix for it.
     findings.extend(_result_gated_teardowns(jobs))
+
+    # ⇒ POOL MODE. Consumer mode is everything below and is unchanged; this branch only
+    # ever engages for a document that is itself the canonical pool. `auto` errs toward
+    # consumer mode, so an unrecognised file keeps today's behaviour exactly.
+    if target_kind == "pool" or (
+        target_kind == "auto" and not pools and _looks_like_the_canonical_pool(document)
+    ):
+        findings.extend(_check_pool_contract(document))
+        return findings
 
     if not pools:
         # ⚠ Still returns here: everything below is pool-RELATIVE, and letting it run would
@@ -236,13 +334,36 @@ def check(document: dict[str, Any]) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("workflow", type=Path)
+    parser.add_argument(
+        "--target-kind",
+        choices=("auto", "consumer", "pool"),
+        default="auto",
+        help=(
+            "What the workflow file IS. 'consumer' calls the canonical pool; 'pool' is "
+            "the canonical pool itself. 'auto' (default) picks consumer unless the file "
+            "declares workflow_call with an AKASH_API_KEY secret."
+        ),
+    )
     args = parser.parse_args()
     try:
         document = yaml.safe_load(args.workflow.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:
         print(f"Akash runner standard: could not read workflow: {exc}", file=sys.stderr)
         return 2
-    findings = check(document)
+    findings = check(document, target_kind=args.target_kind)
+    # ⚠ The guidance is printed BESIDE the finding, never folded into it: the finding
+    # string is pinned verbatim by the characterisation tests in
+    # test_teardown_not_result_gated.py and test_no_vacuous_pass.py, and rewording it to
+    # be friendlier would silently unpin those. What was wrong in just-akash#200 was not
+    # the wording — it was that the only mode available judged the wrong thing.
+    if args.target_kind == "auto" and findings == [
+        "no canonical just-akash runner-pool reusable job found"
+    ]:
+        print(
+            "Akash runner standard: no job in this file `uses:` the canonical pool. If "
+            "this file IS the canonical pool rather than a consumer of it, re-run with "
+            "--target-kind pool to judge the pool's own contract instead."
+        )
     for finding in findings:
         print(f"::error title=Akash runner standard::{finding}")
     if findings:
