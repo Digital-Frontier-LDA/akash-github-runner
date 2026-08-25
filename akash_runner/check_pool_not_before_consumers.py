@@ -55,6 +55,7 @@ import yaml
 
 # A consumer names its pool through the pool's runner-targets output.
 _TARGETS = re.compile(r"needs\.(?P<pool>[A-Za-z0-9_-]+)\.outputs\.runner-targets")
+_STATUS_CHECK = re.compile(r"\b(?:always|cancelled|failure|success)\s*\(")
 
 
 def _jobs(document: dict) -> dict:
@@ -64,6 +65,30 @@ def _jobs(document: dict) -> dict:
 def _needs(job: dict) -> set:
     n = job.get("needs") or []
     return set(n) if isinstance(n, list) else {n}
+
+
+def _liveness_findings(pool: str, job: dict) -> list[str]:
+    """Report the implicit-success gate introduced by adding ``needs``.
+
+    A pool with dependencies but no status-check function inherits GitHub's
+    implicit ``success()`` condition.  That turns an ordering constraint into
+    a liveness gate: one failed/skipped prerequisite prevents the pool from
+    provisioning, while consumers can remain queued for its labels.
+    """
+    if not _needs(job):
+        return []
+    expression = str(job.get("if", ""))
+    if _STATUS_CHECK.search(expression):
+        if re.search(r"\balways\s*\(", expression):
+            return [
+                f"{pool} has needs but uses always(): ordering is checked, "
+                "but a cancelled run can still provision and leak its lease"
+            ]
+        return []
+    return [
+        f"{pool} has needs but its if expression has no status-check function; "
+        "GitHub applies implicit success() and can skip the pool before it provisions"
+    ]
 
 
 def pools_and_consumers(document: dict) -> dict:
@@ -86,6 +111,7 @@ def check(document: dict) -> list:
             findings.append(f"{pool}: consumed by {sorted(consumers)} but no such job exists")
             continue
         pool_needs = _needs(jobs[pool])
+        findings.extend(_liveness_findings(pool, jobs[pool]))
         for consumer in sorted(consumers):
             # external gates only: drop the pool itself and sibling consumers,
             # which would otherwise demand a cycle.

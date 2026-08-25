@@ -138,6 +138,7 @@ runs:
           check_funding_projection_is_quantised.py
           check_teardown_cannot_be_silenced.py
           check_test_pins_a_literal.py
+          check_pool_not_before_consumers.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -212,6 +213,7 @@ runs:
           # documented in akash_runner/test_every_rule_has_a_call_site.py
           # (ADVISORY entry).
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
+          advisory check_pool_not_before_consumers.py --workflows-dir "$WORKFLOWS_DIR"
         else
           # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
           # reports nothing is indistinguishable from a rule that passed. `::notice` is

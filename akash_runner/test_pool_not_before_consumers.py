@@ -71,6 +71,7 @@ jobs:
   gate: {{runs-on: ubuntu-latest}}
   pool:
     needs: [gate]
+    if: ${{{{ !cancelled() }}}}
     runs-on: ubuntu-latest
   work:
     needs: [gate, pool]
@@ -93,6 +94,7 @@ jobs:
   gate: {{runs-on: ubuntu-latest}}
   pool:
     needs: [gate]
+    if: ${{{{ !cancelled() }}}}
     runs-on: ubuntu-latest
   c0:
     needs: [gate, pool]
@@ -131,12 +133,14 @@ jobs:
   slow: {{needs: [gate], runs-on: ubuntu-latest}}
   poolA:
     needs: [gate]
+    if: ${{{{ !cancelled() }}}}
     runs-on: ubuntu-latest
   poolB:
     runs-on: ubuntu-latest
   workA:
     needs: [gate, poolA]
     runs-on: "${{{{ fromJSON(needs.poolA.outputs.runner-targets) }}}}"
+    # Keep this fixture tied to the shared target expression: {TARGETS}
   workB:
     needs: [gate, slow, poolB]
     runs-on: "${{{{ fromJSON(needs.poolB.outputs.runner-targets) }}}}"
@@ -145,3 +149,88 @@ jobs:
     findings = mod.check(doc)
     assert len(findings) == 1, f"expected exactly the poolB finding, got {findings}"
     assert "poolB" in findings[0] and "workB" in findings[0], findings
+
+
+def test_pool_without_needs_is_not_flagged_for_implicit_success() -> None:
+    doc = _doc(
+        f"""
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+  work:
+    needs: [pool]
+    runs-on: "{TARGETS}"
+"""
+    )
+    assert not [f for f in mod.check(doc) if "status-check function" in f]
+
+
+def test_pool_with_needs_and_not_cancelled_passes_liveness_check() -> None:
+    doc = _doc(
+        f"""
+jobs:
+  gate: {{runs-on: ubuntu-latest}}
+  pool:
+    needs: [gate]
+    if: ${{{{ !cancelled() }}}}
+    runs-on: ubuntu-latest
+  work:
+    needs: [gate, pool]
+    runs-on: "{TARGETS}"
+"""
+    )
+    assert not [f for f in mod.check(doc) if "status-check function" in f]
+
+
+def test_pool_with_needs_and_always_warns_about_lease_leak() -> None:
+    doc = _doc(
+        f"""
+jobs:
+  gate: {{runs-on: ubuntu-latest}}
+  pool:
+    needs: [gate]
+    if: ${{{{ always() }}}}
+    runs-on: ubuntu-latest
+  work:
+    needs: [gate, pool]
+    runs-on: "{TARGETS}"
+"""
+    )
+    findings = mod.check(doc)
+    assert any("uses always()" in f for f in findings), findings
+    assert not any("no status-check function" in f for f in findings), findings
+
+
+def test_blazing_back_pool_with_needs_but_no_status_function_is_flagged() -> None:
+    doc = _doc(
+        f"""
+jobs:
+  provision-cd-pool:
+    needs: [canary-deploy, setup-providers, smoke-dfc, smoke-single]
+    if: ${{{{ github.event.action != 'closed' }}}}
+    runs-on: ubuntu-latest
+  c0:
+    needs: [canary-deploy, setup-providers, smoke-dfc, smoke-single, provision-cd-pool]
+    runs-on: "{TARGETS.replace('pool', 'provision-cd-pool')}"
+"""
+    )
+    findings = mod.check(doc)
+    assert any("provision-cd-pool" in f and "no status-check function" in f for f in findings)
+
+
+def test_provision_akash_runner_with_always_is_not_implicit_success() -> None:
+    doc = _doc(
+        f"""
+jobs:
+  provision-akash-runner:
+    needs: [classify-changes]
+    if: ${{{{ always() && github.event.action != 'closed' }}}}
+    runs-on: ubuntu-latest
+  e1:
+    needs: [classify-changes, provision-akash-runner]
+    runs-on: "{TARGETS.replace('pool', 'provision-akash-runner')}"
+"""
+    )
+    findings = mod.check(doc)
+    assert not any("no status-check function" in f for f in findings), findings
+    assert any("uses always()" in f for f in findings), findings
