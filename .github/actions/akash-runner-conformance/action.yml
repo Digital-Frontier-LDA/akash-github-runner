@@ -18,9 +18,11 @@ inputs:
     required: true
   workflows-dir:
     description: >-
-      The consumer's .github/workflows directory. Two rules judge the repo rather than a
-      single file — a backstop reaper is a property of the REPO, not of any one workflow —
-      and they are skipped, loudly, when this is absent.
+      The consumer's .github/workflows directory. Several rules judge the REPO rather
+      than a single file — a backstop reaper is a property of the repo, not of any one
+      workflow — and they are skipped, loudly, when this is absent. The exact set (and
+      which of them are enforcing) is listed in DIR_SCOPED_ENFORCING / DIR_SCOPED_ADVISORY
+      below and named in the skip warning; do not restate it here, it drifts.
     required: false
     default: ""
 
@@ -71,6 +73,34 @@ runs:
         }
 
         advisory check_pool_owns_teardown.py "$WORKFLOW"
+
+        # ⛔ SINGLE SOURCE OF TRUTH FOR THE DIR-SCOPED RULES. The skip warning below is
+        # BUILT from these two arrays, never retyped. The previous notice was a
+        # hand-written sentence naming two rules -- true when written, and still saying
+        # "2 repo-scoped rules" after eight more had been added to the branch beside it.
+        # Three of the eight were ENFORCING, so a consumer with no `workflows-dir` was
+        # told two advisory-sounding rules were skipped while three build-failing rules
+        # silently never ran, and the job went green.
+        #
+        # `akash_runner/test_skipped_rules_are_announced.py` pins the RELATIONSHIP rather
+        # than the sentence: these arrays must equal the rules actually invoked below,
+        # DIR_SCOPED_ENFORCING must equal exactly those invoked with `|| rc=1`, and the
+        # warning must expand the arrays instead of naming anything by hand. Add rule
+        # eleven without touching these and that test fails.
+        DIR_SCOPED_ENFORCING=(
+          check_dereg_backstop.py
+          check_backstop_covers_producers.py
+          check_context_properties_exist.py
+        )
+        DIR_SCOPED_ADVISORY=(
+          check_reaper_schedule.py
+          check_funding_gate_is_not_re_derived.py
+          check_schedule_inputs_are_empty.py
+          check_unvalidated_default.py
+          check_funding_projection_is_quantised.py
+          check_teardown_cannot_be_silenced.py
+          check_test_pins_a_literal.py
+        )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
           # ⭐ PROMOTED TO ENFORCING 2026-08-24. Its advisory period did exactly what an
@@ -145,10 +175,21 @@ runs:
           # (ADVISORY entry).
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
         else
-          # ⛔ SAY SO. A skipped rule that reports nothing is indistinguishable from a rule
-          # that passed, which is the defect this whole action just failed at for three
-          # rules at once. Silence is what made it invisible for weeks.
-          echo "::notice title=2 repo-scoped rules were NOT run::check_dereg_backstop and check_reaper_schedule judge the .github/workflows DIRECTORY, and no \`workflows-dir\` input was supplied — so they were SKIPPED, not passed. Pass \`workflows-dir: .github/workflows\` to run them."
+          # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
+          # reports nothing is indistinguishable from a rule that passed. `::notice` is
+          # the quietest annotation GitHub has and does not surface in the checks UI the
+          # way a warning does -- which is why an undercount at notice level stayed
+          # invisible. Some of these rules FAIL THE BUILD when they run, so their absence
+          # is the difference between a green job that judged this repo and a green job
+          # that did not.
+          # `${arr[*]}` joins on the FIRST character of IFS only, so IFS=', ' yields
+          # "a,b,c" with no spaces. printf + trim gives a readable list.
+          printf -v skipped_enforcing '%s, ' "${DIR_SCOPED_ENFORCING[@]}"
+          printf -v skipped_advisory  '%s, ' "${DIR_SCOPED_ADVISORY[@]}"
+          skipped_enforcing=${skipped_enforcing%, }
+          skipped_advisory=${skipped_advisory%, }
+          skipped_total=$(( ${#DIR_SCOPED_ENFORCING[@]} + ${#DIR_SCOPED_ADVISORY[@]} ))
+          echo "::warning title=${skipped_total} repo-scoped rules were NOT run::No \`workflows-dir\` input was supplied, so ${skipped_total} rules that judge the .github/workflows DIRECTORY were SKIPPED, not passed. ${#DIR_SCOPED_ENFORCING[@]} of them are ENFORCING and would fail this build if they ran: ${skipped_enforcing}. The rest are advisory: ${skipped_advisory}. This job's green tick does NOT cover them. Pass \`workflows-dir: .github/workflows\` to run them."
         fi
 
         exit "$rc"
