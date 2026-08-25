@@ -156,3 +156,82 @@ def test_the_enforcing_list_matches_the_rules_that_actually_fail_the_build():
         f"declared enforcing {sorted(_declared('DIR_SCOPED_ENFORCING'))} != "
         f"actually build-failing {sorted(truly_enforcing)}"
     )
+
+
+# ── The same contract, for the WORKFLOW-scoped half ──────────────────────────────────
+#
+# ⛔ ADDED because `workflow` became optional. The dir-scoped announcement above exists
+# because a hand-maintained list of a set defined ten lines away rots — it was right when
+# written and wrong eight rules later. Introducing a SECOND skip path without the same
+# pins would reproduce that defect exactly, in a file whose docstring describes it.
+#
+# These mirror the dir-scoped tests one for one: whatever the `if` runs, the `else` must
+# name, generated from the arrays and never retyped.
+
+
+def _workflow_guarded_block() -> tuple[str, str]:
+    """Body of `if [ -n "$WORKFLOW" ]` and of its `else`. Column-zero, as above."""
+    script = _script()
+    start = script.index('if [ -n "${WORKFLOW:-}" ]')
+    else_match = re.compile(r"^else$", re.M).search(script, start)
+    assert else_match, "no column-zero `else` after the workflow guard"
+    fi_match = re.compile(r"^fi$", re.M).search(script, else_match.end())
+    assert fi_match, "no column-zero `fi` closing the workflow guard"
+    return script[start:else_match.start()], script[else_match.end():fi_match.start()]
+
+
+def _wf_declared() -> set[str]:
+    return _declared("WORKFLOW_SCOPED_ENFORCING") | _declared("WORKFLOW_SCOPED_ADVISORY")
+
+
+def test_the_workflow_guard_actually_gates_rules():
+    body, _ = _workflow_guarded_block()
+    assert RULE.findall(body), "the workflow guard gates no rules — the helper is matching the wrong block"
+
+
+def test_every_workflow_gated_rule_is_named_in_the_announcement():
+    body, _ = _workflow_guarded_block()
+    run = set(RULE.findall(body))
+    assert run == _wf_declared(), (
+        f"the workflow guard runs {sorted(run)} but the arrays declare "
+        f"{sorted(_wf_declared())} — a rule was added to one and not the other, so the "
+        "skip warning undercounts and a consumer is told less than was skipped"
+    )
+
+
+def test_the_workflow_announcement_is_generated_not_retyped():
+    _, else_body = _workflow_guarded_block()
+    assert "WORKFLOW_SCOPED_ENFORCING" in else_body and "WORKFLOW_SCOPED_ADVISORY" in else_body, (
+        "the workflow skip warning does not expand the arrays — a hand-typed list is the "
+        "exact defect this module exists to prevent"
+    )
+    assert not RULE.findall(else_body), (
+        f"the workflow skip warning names rules by hand ({RULE.findall(else_body)}); it "
+        "must expand the arrays so it cannot drift"
+    )
+
+
+def test_no_workflow_count_is_hard_coded():
+    _, else_body = _workflow_guarded_block()
+    for n in re.findall(r"\b\d+\b", else_body):
+        assert False, f"hard-coded count {n} in the workflow skip warning — use ${{#ARRAY[@]}}"
+
+
+def test_the_workflow_announcement_is_at_least_a_warning():
+    _, else_body = _workflow_guarded_block()
+    assert "::warning" in else_body or "::error" in else_body, (
+        "ENFORCING rules are skipped here; ::notice does not surface in the checks UI, "
+        "which is how the dir-scoped undercount stayed invisible"
+    )
+
+
+def test_the_workflow_enforcing_list_matches_what_actually_fails_the_build():
+    body, _ = _workflow_guarded_block()
+    truly_enforcing = {
+        m for line in body.splitlines() if "|| rc=1" in line for m in RULE.findall(line)
+    }
+    assert _declared("WORKFLOW_SCOPED_ENFORCING") == truly_enforcing, (
+        f"declared enforcing {sorted(_declared('WORKFLOW_SCOPED_ENFORCING'))} != "
+        f"rules that actually fail the build {sorted(truly_enforcing)} — the warning would "
+        "misstate which skipped rules would have failed this build"
+    )

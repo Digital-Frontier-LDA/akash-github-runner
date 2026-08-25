@@ -113,8 +113,30 @@ def test_conformance_action_is_a_composite_action():
     )
 
 
-def test_conformance_action_requires_workflow_input():
+def test_conformance_action_cannot_judge_NOTHING():
+    """The action must never green-tick without examining something.
+
+    ⚠ This replaced `assert inputs["workflow"]["required"] is True`. That assertion pinned
+    action METADATA, and metadata is not the property anyone cared about — a green job
+    that judged nothing is. `workflow` is now optional on purpose: this repo hosts the
+    reusables and has no canonical-pool consumer to point at, and several rules judge the
+    DIRECTORY and need no single file. Naming a non-consumer to satisfy `required: true`
+    is exactly the false claim that put a wrong target in the dogfood in the first place.
+
+    So the guarantee is asserted where it is actually enforced — in the script, at
+    runtime — instead of in a field. This is strictly stronger: it fails the build, and
+    it covers the case `required: true` never did, which is BOTH inputs absent.
+    """
     inputs = _action().get("inputs") or {}
-    assert inputs.get("workflow", {}).get("required") is True, (
-        "conformance action requires a workflow path input"
+    assert "workflow" in inputs, "the action must still accept a workflow path"
+    assert "workflows-dir" in inputs, "the action must still accept a workflows directory"
+
+    script = _action()["runs"]["steps"][0]["run"]
+    assert 'if [ -z "${WORKFLOW:-}" ] && [ -z "${WORKFLOWS_DIR:-}" ]; then' in script, (
+        "no guard rejecting the both-inputs-absent case — the action would run zero rules "
+        "and exit 0, certifying a repo it never examined"
     )
+    guard = script.split('if [ -z "${WORKFLOW:-}" ] && [ -z "${WORKFLOWS_DIR:-}" ]; then', 1)[1]
+    guard = guard.split("fi", 1)[0]
+    assert "::error" in guard, "the both-absent guard must ERROR, not warn"
+    assert "exit 1" in guard, "the both-absent guard must fail the build, not merely report"
