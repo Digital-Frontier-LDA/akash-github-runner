@@ -164,6 +164,16 @@ ADVISORY: dict[str, str] = {
         "finding is either fixed or accepted-with-a-reason — i.e. the rule's hit-rate on "
         "legitimate fixture assertions is zero-unexplained, not merely unmeasured."
     ),
+    "check_demand_scaled_funding_floor.py": (
+        "ADVISORY until every consumer has had the finding shown and either declared "
+        "its demand or stated why not. Live at filing: Blazing-Back's pre-#1617 main "
+        "flags TWO workflows (akash-runner.yml, runner-time-to-ready.yml — both "
+        "provision, neither declares); just-akash provisions via runner-pool.yml and "
+        "would flag too. Enforcing on day one fails every repo at once, which converts "
+        "a standard into an outage. PROMOTE WHEN: every current consumer's provisioning "
+        "workflows declare demand >=2 with a derived floor, or carry an exemption with "
+        "a reason — blast radius zero-unexplained, not merely unmeasured."
+    ),
     "check_reaper_schedule.py": (
         "Same — repo-scoped, blast radius unmeasured. PROMOTE WHEN: it has run advisory "
         "across the consumer set and the findings are either fixed or accepted."
