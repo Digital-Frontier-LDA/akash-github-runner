@@ -48,13 +48,26 @@ exists for it.
 
 It was right. Measured again **2026-08-25 10:01Z**, org runner listing streamed and counted once:
 
-| repo | emitted prefixes | claimable by a reaper | offline registrations |
-|---|---|---|---|
-| `Borduas-Holdings/blazing` | `akash-integration-`, `akash-ci-`, `akash-fast-pool-`, `akash-e2epool-` | **1 of 4** | 167 |
-| `Borduas-Holdings/Blazing-Back` | `df-core-`, plus `akash-*` from any pre-`30fcc2c84` ref | `df-core-` only | 175 |
+⚠ **That table is now stale, and I first mis-read it.** Re-measured **2026-08-25** by running
+the rule against each repo's `origin/main`:
 
-342 offline registrations across the two, and the rule that detects exactly this defect has been
-enforcing the whole time.
+| repo | `check_backstop_covers_producers` | why |
+|---|---|---|
+| `Borduas-Holdings/Blazing-Back` | **PASS** (exit 0, 56 files) | `runner-time-to-ready.yml` fixed same-day in `ab615607b` (#1480) |
+| `Borduas-Holdings/blazing` | **PASS** (exit 0, 21 files) | producers renamed `df-flow-*`; reaper allowlists six prefixes incl. both pool prefixes |
+
+⛔ My first run reported blazing as FAIL with 2 findings. That run was against a **stale local
+feature branch**, not `main` — the reaper script and both producer workflows differ between them.
+The rule was right both times; I pointed it at the wrong tree. Recorded because reading content
+off whatever ref happens to be checked out is the same defect this repo's rules exist to catch.
+
+⇒ **So the coverage defect this rule named on 2026-08-24 has since been fixed in both repos.**
+The rule worked. What follows is about a different gap.
+
+⚠ And `PASS` here means **every emitted prefix is claimable — not that nothing leaks.** At the
+2026-08-25 10:01Z sample, `blazing` still held 167 offline registrations under prefixes its reaper
+*does* cover: a production-rate problem (a pool re-registers on every container restart, so
+orphans scale with idle time) that a coverage rule cannot see and is not meant to.
 
 ⚠ **Neither repo calls this standard.** Verified 2026-08-25: no reference to
 `akash-github-runner` or `reusable-akash-runner-conformance.yml` in either repo's `.github/`.
