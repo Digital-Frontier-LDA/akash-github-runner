@@ -1,0 +1,154 @@
+name: Akash runner CI conformance
+description: Validate a consumer workflow against the leak-safe DF Akash runner lifecycle.
+
+# ⛔ EVERY RULE IN akash_runner/ MUST APPEAR IN THIS FILE. Measured 2026-08-24: three
+# merged, tested rules — check_pool_owns_teardown, check_dereg_backstop and
+# check_reaper_schedule — were invoked by NOBODY, because this action ran only
+# check_standard.py. A green conformance check certified one quarter of the standard and
+# read as certifying all of it. Their passing test suites are what made it invisible:
+# a test proves the rule WORKS; only the call site proves it RUNS.
+#
+# `akash_runner/test_every_rule_has_a_call_site.py` now fails if a `check_*.py` is neither
+# invoked below nor listed there with a stated reason. That test is the fix; the wiring
+# below is only the backlog.
+
+inputs:
+  workflow:
+    description: Workflow file containing pool, work, and teardown jobs.
+    required: true
+  workflows-dir:
+    description: >-
+      The consumer's .github/workflows directory. Two rules judge the repo rather than a
+      single file — a backstop reaper is a property of the REPO, not of any one workflow —
+      and they are skipped, loudly, when this is absent.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WORKFLOW: ${{ inputs.workflow }}
+        WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
+      run: |
+        set -euo pipefail
+        python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+        ROOT="$GITHUB_ACTION_PATH/../../../akash_runner"
+
+        # ⛔ EVERY RULE RUNS, AND EVERY STATUS IS KEPT. `set -e` would stop at the first
+        # failure and a consumer would fix one rule, re-run, and meet the next — so each
+        # invocation is guarded and the action fails once at the end with everything named.
+        rc=0
+
+        # ── ENFORCING ─────────────────────────────────────────────────────────────────
+        python3 "$ROOT/check_standard.py" -- "$WORKFLOW" || rc=1
+        # A teardown that always runs and receives nothing is reachable, and inert. The
+        # shape check above cannot see WHEN the lease identity is published; this one can.
+        # Measured: it separates just-akash before and after 53515bc, and rejects the
+        # Blazing-Back#1468 shape that billed two deployments for 32 hours.
+        python3 "$ROOT/check_teardown_can_identify.py" "$WORKFLOW" || rc=1
+
+        # ── ADVISORY ──────────────────────────────────────────────────────────────────
+        # ⚠ REPORTED, NOT ENFORCED — ON PURPOSE, AND NOT FOREVER. These three have never
+        # judged a consumer. Turning them on at full strength would fail real repos on
+        # their next run for defects that have been latent for weeks, and at least one
+        # would fail a repo that is correct today: check_pool_owns_teardown requires an
+        # unconditional teardown on the premise that "an empty identity is a safe no-op",
+        # which is TRUE for just-akash (runner-teardown.yml:140 no-ops) and FALSE for
+        # Blazing-Back (ci_close_akash_deployment.sh:43 exits 1). Enforcing before that
+        # repo can comply converts a silent gap into a broken pipeline.
+        # ⇒ Advisory first so the blast radius is MEASURED, then promoted. The promotion
+        # criteria live in the test file beside the reason, so "temporary" has a
+        # definition instead of being whatever nobody got round to.
+        advisory() {
+          local script="$1"; shift
+          if python3 "$ROOT/$script" "$@"; then
+            echo "advisory ${script}: PASS"
+          else
+            echo "::warning title=ADVISORY — ${script} (not yet enforced, see #154)::This rule is not failing the build yet. Its findings are above. It will be promoted to enforcing once its blast radius across consumers has been measured."
+          fi
+        }
+
+        advisory check_pool_owns_teardown.py "$WORKFLOW"
+
+        if [ -n "${WORKFLOWS_DIR:-}" ]; then
+          # ⭐ PROMOTED TO ENFORCING 2026-08-24. Its advisory period did exactly what an
+          # advisory period is for: the first run found a FALSE POSITIVE against df-cicd
+          # itself, and following it up found a SECOND against blazing. Both are fixed —
+          # the rule now asks whether a repo CREATES registrations, and it follows a
+          # reaper that delegates to a shell script. Swept all 5 consumers named in
+          # CONSUMERS.md: 5 PASS, 0 outstanding findings.
+          python3 "$ROOT/check_dereg_backstop.py" "$WORKFLOWS_DIR" || rc=1
+          advisory check_reaper_schedule.py "$WORKFLOWS_DIR"
+          # ⛔ FUNDING IS A SHARED DECISION, NOT A PER-REPO ONE. akash-lease-core v0.8.0
+          # answers it once — quantised, naming WHICH quantity it read, three outcomes,
+          # max(SLOT) never the sum. This rule fails a consumer that re-derives it from
+          # raw numbers. ADVISORY: it fails Blazing-Back today by design, and enforcing
+          # before any consumer has adopted the primitive would red every runner workflow.
+          advisory check_funding_gate_is_not_re_derived.py "$WORKFLOWS_DIR"
+          # ⛔ EXISTENCE IS NOT COVERAGE. check_dereg_backstop above asks whether a
+          # scheduled dereg EXISTS; this asks whether it reaps what the repo EMITS.
+          #
+          # ENFORCING since 2026-08-24. Its promotion condition was "every consumer's
+          # emitted prefixes are covered by its backstop, BY ANY ROUTE" — measured met:
+          #   blazing       21 workflows  PASS  (producers emit df-flow-*, backstop
+          #                                      filters startswith("df-flow-"))
+          #   Blazing-Back  56 workflows  PASS  (producers emit df-core-, reaper
+          #                                      PREFIXES: df-core-)
+          # Both closed the gap by renaming producers onto a covered stem, NOT by
+          # widening a reaper — which is why the condition names a STATE and not a
+          # remedy (#161). A known-positive control confirms the rule still fails:
+          # a synthetic producer emitting an uncovered prefix exits 1.
+          python3 "$ROOT/check_backstop_covers_producers.py" "$WORKFLOWS_DIR" || rc=1
+          # A schedule supplies NO inputs, so `inputs.X || 'false'` silently means
+          # "destroy" on every cron firing. Blazing-Back's cleanup-stale-akash.yml
+          # carried exactly that on a 6-hourly destructive job.
+          advisory check_schedule_inputs_are_empty.py --workflows-dir "$WORKFLOWS_DIR"
+          # A context property that does not exist resolves to the EMPTY STRING,
+          # silently — measured twice (just-akash #182 github.organization; #184
+          # job.workflow_sha/workflow_repository pinned every runner checkout to
+          # main's tip). Checks the CLOSED vocabularies (job/runner/strategy) and
+          # the documented github.* leaves; open vocabularies are deliberately
+          # untouched.
+          #
+          # ⭐ PROMOTED TO ENFORCING 2026-08-24 (#163). The PROMOTE WHEN condition
+          # was "every current consumer's workflows-dir has been scanned and
+          # every finding is either fixed or exempted-with-a-reason — i.e. the
+          # rule's blast radius across consumers is zero-unexplained, not merely
+          # unmeasured." Measured met: DigitalFrontier-infra PASS (56 workflows),
+          # Borduas-Holdings/blazing PASS (21 workflows, fresh sparse clone),
+          # df-cicd PASS (25 workflows, own workflows-dir). Known-positive
+          # synthetic workflow with `${{ job.workflow_sha }}` still exits 1,
+          # proving the rule is not inert. Precedent: #162, promoted on the same
+          # shape (blazing 21 PASS + Blazing-Back 56 PASS + known-positive exit
+          # 1). The rule's scope is documented in
+          # akash_runner/test_every_rule_has_a_call_site.py (ENFORCING entry).
+          python3 "$ROOT/check_context_properties_exist.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
+          # ⛔ ${VAR:-default} substitutes ONLY when VAR is unset or EMPTY — a
+          # non-numeric set value like `abc` passes straight through and reaches
+          # the numeric comparison as `abc`, a bash SYNTAX ERROR. Measured today
+          # on DigitalFrontier-infra: akash-runner.yml:328 MIN_UACT and
+          # ci-pr.yml:4747 MIN_AGE_HOURS. The rule's scope is documented in
+          # akash_runner/test_every_rule_has_a_call_site.py (ADVISORY entry).
+          advisory check_unvalidated_default.py --workflows-dir "$WORKFLOWS_DIR"
+          advisory check_funding_projection_is_quantised.py --workflows-dir "$WORKFLOWS_DIR"
+          advisory check_teardown_cannot_be_silenced.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ A test that pins the SHAPE of the defect it is supposed to detect
+          # — assertion body holds the literal `job.workflow_sha` /
+          # `./.github/actions/foo` while the message describes a general
+          # property. Three measured regressions in one day (just-akash #184,
+          # df-cicd #149, DEVOPS blank-prefix). The rule flags only body-pin +
+          # property-message pairs; precision words (`exactly`, `must equal`)
+          # keep fixture-style assertions out of scope. The rule's scope is
+          # documented in akash_runner/test_every_rule_has_a_call_site.py
+          # (ADVISORY entry).
+          advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
+        else
+          # ⛔ SAY SO. A skipped rule that reports nothing is indistinguishable from a rule
+          # that passed, which is the defect this whole action just failed at for three
+          # rules at once. Silence is what made it invisible for weeks.
+          echo "::notice title=2 repo-scoped rules were NOT run::check_dereg_backstop and check_reaper_schedule judge the .github/workflows DIRECTORY, and no \`workflows-dir\` input was supplied — so they were SKIPPED, not passed. Pass \`workflows-dir: .github/workflows\` to run them."
+        fi
+
+        exit "$rc"

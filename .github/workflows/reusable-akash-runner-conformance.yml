@@ -1,0 +1,89 @@
+# Reusable Akash runner CI conformance check.
+#
+# Why this exists. PR #133 / PR #134 already define the DF Akash runner lifecycle
+# (pool -> work -> always-teardown) and the conformance checker at
+# `akash_runner/check_standard.py`. The companion action at
+# `.github/actions/akash-runner-conformance` lives HERE, in df-cicd — NOT in the
+# caller's tree. The reusable WORKFLOW wrapper lets consumers adopt it without
+# re-implementing the checkout + python setup themselves.
+#
+# ⛔ THIS WORKFLOW MUST CHECK OUT df-cicd EXPLICITLY, AND FOR A LONG TIME IT DID NOT.
+# A reusable workflow's job runs in the CALLER's context, so `github.repository` is
+# THEIR repo and a bare `actions/checkout` fetches THEIR code. `uses: ./.github/
+# actions/akash-runner-conformance` then resolved against the caller's tree, where
+# that directory does not exist — so the job could never be created. Every consumer
+# run failed with `jobs=0`: nothing scheduled, no log, no annotation, and therefore
+# no way to see the cause from the API. It only ever worked when the caller WAS
+# df-cicd, which is exactly why the self-test passed while all nine rules reached
+# no consumer at all (#149).
+#
+# ⚠ `checker-ref` is REQUIRED and has NO DEFAULT, for the same reason as just-akash
+# #184: no context exposes a reusable workflow's own revision to itself —
+# `github.workflow_ref`/`github.workflow_sha` name the CALLER's entry workflow, and
+# `job.*` carries only check_run_id/container/services/status. A default would make
+# the CHECKER float: a consumer pinned to @<sha> would be judged by whatever `main`
+# said at that second, which is the drift this standard exists to remove.
+#
+# Consumer call site (⛔ pin df-cicd by 40-hex COMMIT SHA, never a tag — see #147):
+#   jobs:
+#     runner-conformance:
+#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-runner-conformance.yml@13ba1b441cf9b7a2406d8df813d579729c1f0890 # df-cicd main
+#       with:
+#         workflow: .github/workflows/ci-pr.yml
+#         checker-ref: 13ba1b441cf9b7a2406d8df813d579729c1f0890  # SAME sha as the @pin above
+#
+# The action exits 1 with `::error title=Akash runner standard::...` lines on any
+# finding; `::error` annotations surface on the consuming PR's workflow run. The
+# check is intentionally fail-closed — a missing/wrong runner workflow is a leak
+# risk, not a style issue.
+name: Akash runner CI conformance (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: >-
+          Workflow file to validate (relative path inside the caller checkout).
+          Must contain pool, work, and teardown jobs with the DF lifecycle shape.
+        required: true
+        type: string
+      checker-ref:
+        description: >-
+          REQUIRED, no default. The df-cicd revision to run the CHECKER from —
+          pass the SAME 40-hex sha you pinned this workflow to with `@`.
+
+          No default on purpose: see the note at the top of this file. A default
+          means the checker floats to a branch tip while the caller believes their
+          `@<sha>` pin governs it.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: runner-conformance
+    runs-on: ubuntu-latest
+    steps:
+      # 1. The CALLER's tree — the thing being judged. Lands at the workspace root
+      #    so `inputs.workflow` stays a path relative to the caller, unchanged.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        # Checker only READS the tree; do not leave a usable token in .git/config
+        # for any later step to pick up.
+        with: { persist-credentials: false }
+
+      # 2. df-cicd itself — the CHECKER. Without this the composite action below
+      #    does not exist on disk and the job cannot be created at all (#149).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: Digital-Frontier-LDA/akash-github-runner
+          ref: ${{ inputs.checker-ref }}
+          path: .akash-github-runner
+          persist-credentials: false
+
+      # The action resolves its rules via `$GITHUB_ACTION_PATH/../../../akash_runner`,
+      # i.e. relative to ITSELF, so it works from any checkout path.
+      - uses: ./.akash-github-runner/.github/actions/akash-runner-conformance
+        with:
+          workflow: ${{ inputs.workflow }}

@@ -1,0 +1,164 @@
+# Reusable STALE ORG-RUNNER REGISTRATION reaper — the backstop
+# `akash_runner/check_dereg_backstop.py` requires, in one adoptable place.
+#
+# WHY THIS EXISTS. The rule already said every repo that registers org runners must run a
+# scheduled de-registration backstop. Nothing shipped that a consumer could ADOPT, so each
+# repo either wrote its own or wrote none. Measured 2026-08-23 across two consumers:
+#
+#   producer                              name prefix            backstop
+#   blazing/akash-integration-new.yml     akash-integration-*    yes (repo-local, one-off)
+#   blazing/akash-ci.yml                  akash-ci-*             NONE
+#   blazing/akash-runner.yml              akash-*                NONE
+#   Blazing-Back/akash-runner.yml         akash-*                NONE  (repo has no reaper at all)
+#
+# Three of four producers had no backstop. The org listing reached 9,429 registrations, and
+# because GitHub cannot filter runners by label the provisioner pays ceil(listing/100) REST
+# calls PER POLL — ~95 at that size, ~1,395 per provisioning cycle at REG_TRIES=45. That
+# exhausts the shared PAT, and an exhausted PAT makes the NEXT runner 403 on its registration
+# token, which strands its lease. The registration leak and the escrow leak are one loop.
+#
+# CONSUMER CALL SITE (pin df-cicd to an immutable tag):
+#   jobs:
+#     reap-stale-runners:
+#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@13ba1b441cf9b7a2406d8df813d579729c1f0890 # df-cicd main
+#       with:
+#         org: my-org
+#         name-prefixes: akash-ci-,akash-integration-
+#         dry-run: false
+#       secrets:
+#         runner-pat: ${{ secrets.GH_RUNNER_PAT }}
+name: Stale org-runner registration reaper (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      org:
+        description: GitHub organisation whose runner registrations to reap.
+        required: true
+        type: string
+      name-prefixes:
+        description: >-
+          Comma-separated runner-NAME prefixes this repo owns. REQUIRED and validated
+          non-blank: an empty prefix would match every runner in the org, including other
+          repos'. Fail-closed rather than reap-everything.
+        required: true
+        type: string
+      dry-run:
+        description: Report only. DEFAULTS TO TRUE — a destructive default is how sweepers
+          delete before anyone has read their output.
+        required: false
+        default: true
+        type: boolean
+      api-floor:
+        description: >-
+          Stop reaping when remaining core REST quota falls below this. The reaper competes
+          with the runner PROVISIONER for one budget, and a blinded provisioner orphans
+          runners — i.e. an unbounded reaper causes the leak it is cleaning up.
+        required: false
+        default: 1500
+        type: number
+    secrets:
+      runner-pat:
+        description: PAT with org admin:org scope. Falls back to nothing — see the guard below.
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    name: reap-stale-runners
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Reap offline, non-busy registrations under the owned prefixes
+        env:
+          GH_TOKEN: ${{ secrets.runner-pat }}
+          ORG: ${{ inputs.org }}
+          PREFIXES: ${{ inputs.name-prefixes }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          API_FLOOR: ${{ inputs.api-floor }}
+        run: |
+          set -euo pipefail
+
+          # ---- fail closed on a blank prefix list -------------------------------------
+          # `.strip()`-equivalent: a whitespace-only input must NOT become a prefix that
+          # matches everything. This is the one input whose failure mode is destructive.
+          CLEAN="$(printf '%s' "$PREFIXES" | tr -d '[:space:]')"
+          if [ -z "$CLEAN" ]; then
+            echo "::error title=Stale runner reaper::name-prefixes is blank. Refusing to run —"\
+                 "an empty prefix matches EVERY runner in the org, including other repos'."
+            exit 2
+          fi
+
+          core() { gh api rate_limit --jq '.resources.core.remaining' 2>/dev/null || echo 0; }
+          R="$(core)"
+          echo "core budget: ${R}, floor: ${API_FLOOR}"
+          if [ "$R" -le "$API_FLOOR" ]; then
+            # Exit 0: not reaping is the SAFE outcome, and failing the job here would make a
+            # busy CI window look like a broken reaper.
+            echo "::notice title=Stale runner reaper::SKIPPED — core ${R} at or below floor ${API_FLOOR}."\
+                 "Not reaping: the provisioner needs this budget more than the listing needs shrinking."
+            exit 0
+          fi
+
+          # ---- snapshot ---------------------------------------------------------------
+          # `--paginate` applies --jq PER PAGE, which is correct here: we want a flat id list,
+          # not an aggregate. A `| length` would print one count per page and mislead.
+          gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" \
+            --jq '.runners[] | select(.status=="offline" and .busy==false) | "\(.id)\t\(.name)"' \
+            > /tmp/offline.tsv || true
+
+          TOTAL="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count')"
+          OFFLINE="$(wc -l < /tmp/offline.tsv | tr -d ' ')"
+
+          # Keep only names under an owned prefix. Ownership is the NAME, not presence in the
+          # org — the org listing is shared, exactly as an Akash wallet is.
+          : > /tmp/owned.tsv
+          IFS=',' read -ra PFX <<< "$PREFIXES"
+          while IFS=$'\t' read -r id name; do
+            [ -n "${id:-}" ] || continue
+            for p in "${PFX[@]}"; do
+              p="$(printf '%s' "$p" | tr -d '[:space:]')"
+              [ -n "$p" ] || continue
+              case "$name" in "$p"*) printf '%s\t%s\n' "$id" "$name" >> /tmp/owned.tsv; break ;; esac
+            done
+          done < /tmp/offline.tsv
+          OWNED="$(wc -l < /tmp/owned.tsv | tr -d ' ')"
+
+          echo "listing=${TOTAL} offline=${OFFLINE} owned_by_us=${OWNED} prefixes=${PREFIXES}"
+          echo "per-poll cost for the provisioner at this listing size: ~$(( (TOTAL + 99) / 100 )) REST calls"
+
+          if [ "$OWNED" -eq 0 ]; then
+            # LOUD ON ZERO. A reaper that closed nothing and one that had nothing to close read
+            # identically unless you say so — that silence is why leaks run for days unnoticed.
+            echo "::notice title=Stale runner reaper::Reaped 0 — listing=${TOTAL}, offline=${OFFLINE},"\
+                 "none matched prefixes '${PREFIXES}'. This is 'nothing MATCHED', not 'nothing to do':"\
+                 "if this repo registers runners, check the prefix is still what the SDL emits."
+            exit 0
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice title=Stale runner reaper::DRY RUN — would delete ${OWNED} registration(s)."
+            cut -f2 /tmp/owned.tsv | head -20 | sed 's/^/  would delete: /'
+            exit 0
+          fi
+
+          D=0
+          while IFS=$'\t' read -r id name; do
+            [ -n "${id:-}" ] || continue
+            # Re-check the floor every 25 deletions, not every one: a rate_limit call per
+            # delete halves throughput, and rate_limit itself is free but not instant.
+            if [ $(( D % 25 )) -eq 0 ]; then
+              R="$(core)"
+              if [ "$R" -le "$API_FLOOR" ]; then
+                echo "::notice title=Stale runner reaper::Stopped at floor — core ${R}, deleted ${D}/${OWNED}."
+                break
+              fi
+            fi
+            gh api -X DELETE "orgs/${ORG}/actions/runners/${id}" >/dev/null 2>&1 && D=$(( D + 1 ))
+          done < /tmp/owned.tsv
+
+          AFTER="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count')"
+          echo "::notice title=Stale runner reaper::Deleted ${D} of ${OWNED}. Listing ${TOTAL} -> ${AFTER}."\
+               "Provisioner per-poll cost ~$(( (TOTAL + 99) / 100 )) -> ~$(( (AFTER + 99) / 100 )) REST calls."

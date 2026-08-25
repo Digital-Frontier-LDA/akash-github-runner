@@ -1,0 +1,120 @@
+"""Structural tests for the reusable Akash runner conformance workflow.
+
+The reusable workflow at .github/workflows/reusable-akash-runner-conformance.yml
+is a thin YAML wrapper around ./.github/actions/akash-runner-conformance. These
+tests guard the wrapper shape so a future edit cannot silently break the
+workflow_call contract that consumer repos depend on.
+"""
+
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "reusable-akash-runner-conformance.yml"
+ACTION_DIR = REPO_ROOT / ".github" / "actions" / "akash-runner-conformance"
+
+
+def _workflow() -> dict:
+    return yaml.safe_load(WORKFLOW.read_text())
+
+
+def _action() -> dict:
+    return yaml.safe_load((ACTION_DIR / "action.yml").read_text())
+
+
+def _triggers(document: dict) -> dict:
+    return document.get(True) or document.get("on") or {}
+
+
+def test_workflow_exists_and_parses():
+    document = _workflow()
+    assert isinstance(document, dict), "workflow must be a YAML mapping"
+
+
+def test_workflow_uses_workflow_call_trigger():
+    triggers = _triggers(_workflow())
+    assert "workflow_call" in triggers, (
+        "reusable workflow MUST expose workflow_call so consumer repos can `uses:` it"
+    )
+
+
+def test_workflow_inputs_require_a_workflow_path():
+    triggers = _triggers(_workflow())
+    inputs = (triggers.get("workflow_call") or {}).get("inputs") or {}
+    assert "workflow" in inputs, "workflow input is required so the action has a target file"
+    assert inputs["workflow"].get("required") is True, "workflow input must be required"
+
+
+def test_workflow_calls_the_conformance_action():
+    """The workflow must invoke the conformance action from a checkout it CONTROLS.
+
+    ⛔ THIS TEST USED TO PIN `./.github/actions/akash-runner-conformance`, AND THAT
+    PINNED THE BUG. A reusable workflow's job runs in the CALLER's context, so a
+    bare `./` resolves inside the CALLER's tree — where that directory does not
+    exist in any consumer. The job could therefore never be created and every
+    consumer run died with `jobs=0` (#149). Asserting the caller-relative literal
+    made the broken form mandatory: green on the defect, red on the fix.
+
+    ⇒ Assert the PROPERTY — the conformance action is invoked, by a local path —
+    not the one literal that happened to be there. The companion
+    `test_workflow_checks_out_df_cicd_itself` pins WHERE that path must come from.
+    """
+    jobs = _workflow().get("jobs") or {}
+    assert jobs, "reusable workflow must define at least one job"
+    step_uses = [
+        step.get("uses")
+        for job in jobs.values()
+        for step in (job.get("steps") or [])
+        if isinstance(step.get("uses"), str)
+    ]
+    local = [u for u in step_uses if u.startswith("./")]
+    assert any(u.endswith("/.github/actions/akash-runner-conformance") for u in local), (
+        "reusable workflow must invoke the akash-runner-conformance action by a local "
+        f"path (found uses: {step_uses})"
+    )
+    assert not any(u == "./.github/actions/akash-runner-conformance" for u in local), (
+        "a bare `./.github/actions/...` resolves inside the CALLER's tree, which has no "
+        "such directory — that is #149. Check out df-cicd to a path and reference it "
+        "from there."
+    )
+
+
+def test_workflow_checks_out_df_cicd_itself():
+    """The action must come from df-cicd, at a revision the CALLER pins.
+
+    Without an explicit `repository:` the checkout fetches the caller's repo, and the
+    action is simply absent. And the ref cannot be derived — no context exposes a
+    reusable workflow's own revision to itself (`github.workflow_*` names the CALLER's
+    entry workflow; `job.*` carries only check_run_id/container/services/status), which
+    is the same root as just-akash#184. So it must be a required input, or the CHECKER
+    floats to a branch tip while the consumer believes their `@<sha>` governs it.
+    """
+    wf = _workflow()
+    inputs = (_triggers(wf).get("workflow_call") or {}).get("inputs") or {}
+    assert "checker-ref" in inputs, "the checker revision must be an explicit input"
+    assert inputs["checker-ref"].get("required") is True, "checker-ref must be required"
+    assert "default" not in inputs["checker-ref"], (
+        "a default makes the CHECKER float while looking pinned from the caller's side"
+    )
+    steps = [s for job in (wf.get("jobs") or {}).values() for s in (job.get("steps") or [])]
+    ck = [s for s in steps if isinstance(s.get("uses"), str) and "actions/checkout" in s["uses"]]
+    ours = [s for s in ck if (s.get("with") or {}).get("repository", "").endswith("/df-cicd")]
+    assert ours, f"one checkout must name df-cicd explicitly (found {[(s.get('with') or {}).get('repository') for s in ck]})"
+    w = ours[0]["with"]
+    assert "checker-ref" in str(w.get("ref", "")), "the df-cicd checkout must use inputs.checker-ref"
+    assert w.get("path"), "the df-cicd checkout needs its own path so it does not clobber the caller's tree"
+
+
+def test_conformance_action_is_a_composite_action():
+    action = _action()
+    assert action.get("runs", {}).get("using") == "composite", (
+        "conformance action must be composite (it shells out to check_standard.py)"
+    )
+
+
+def test_conformance_action_requires_workflow_input():
+    inputs = _action().get("inputs") or {}
+    assert inputs.get("workflow", {}).get("required") is True, (
+        "conformance action requires a workflow path input"
+    )

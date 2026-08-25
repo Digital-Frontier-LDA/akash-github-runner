@@ -1,0 +1,548 @@
+"""Controls for "a repo registering org runners must run a scheduled dereg backstop".
+
+⛔ THE MEASURED LOOP: Borduas-Holdings carried 3,025 org runner registrations (2,900
+offline+idle, 53 online, 0 busy) against Digital-Frontier's 1. `runner-pool.yml` polls
+`orgs/{org}/actions/runners --paginate`, so each poll costs ceil(3025/100) = 31 calls.
+Stale registrations raise the poll cost, the core budget empties, the provisioner goes
+blind, runners are orphaned, and the count rises again. Positive feedback, every term
+measured. What was missing is a DRAIN.
+"""
+
+from __future__ import annotations
+
+import sys
+
+import pytest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from akash_runner.check_dereg_backstop import check_directory  # noqa: E402
+
+POOL = """
+on:
+  workflow_call:
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" | jq .
+          # ⚠ A LISTING READ NO LONGER PUTS A REPO IN SCOPE — it is what a REAPER does
+          # too, and scoping on it made the rule fail df-cicd for shipping the reaper.
+          # These fixtures always MEANT "a repo that registers runners"; they merely
+          # expressed it with a signal that turns out not to mean that. The env below
+          # is the creation act.
+          #   - RUNNER_SCOPE=org
+          #   - RUNNER_NAME_PREFIX=fixture-
+"""
+
+PER_RUN_DEREG = """
+on:
+  workflow_call:
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          IDS=$(gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" \\
+                | jq -r '.runners[] | select(.status=="offline") | .id')
+          for id in $IDS; do gh api -X DELETE "orgs/${ORG}/actions/runners/${id}"; done
+"""
+
+SCHEDULED_SAFE = PER_RUN_DEREG.replace(
+    "on:\n  workflow_call:",
+    'on:\n  schedule:\n    - cron: "41 */6 * * *"\n  workflow_dispatch:',
+)
+SCHEDULED_UNSAFE = SCHEDULED_SAFE.replace(' | select(.status=="offline")', "")
+
+
+def _dir(tmp_path, **files):
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    return check_directory(tmp_path)
+
+
+def test_known_bad_org_runners_registered_with_only_per_run_cleanup(tmp_path):
+    """★ just-akash @origin/main: exactly two workflows de-register, NEITHER scheduled."""
+    findings = _dir(
+        tmp_path, **{"runner-pool.yml": POOL, "runner-teardown.yml": PER_RUN_DEREG}
+    )
+    assert findings and "no workflow performs a SCHEDULED" in findings[0]
+
+
+def test_known_good_a_scheduled_offline_filtered_reaper_satisfies_it(tmp_path):
+    findings = _dir(
+        tmp_path,
+        **{
+            "runner-pool.yml": POOL,
+            "runner-teardown.yml": PER_RUN_DEREG,
+            "reap-offline-runners.yml": SCHEDULED_SAFE,
+        },
+    )
+    assert findings == []
+
+
+def test_an_unsafe_reaper_is_a_HAZARD_and_does_not_satisfy_the_rule(tmp_path):
+    """★★ THE close-orphans TRAP, avoided. A rule demanding "a scheduled dereg" and nothing
+    more is satisfiable by a workflow that de-registers EVERY runner, including one mid-job
+    — making the rule the cause of a worse outage than it prevents.
+
+    An unsafe reaper must fail BOTH ways: flagged as a hazard, AND not counted toward the
+    requirement. If it merely failed the hazard check while satisfying the requirement,
+    removing the filter would trade one finding for a destroyed running job."""
+    findings = _dir(
+        tmp_path, **{"runner-pool.yml": POOL, "reap-all.yml": SCHEDULED_UNSAFE}
+    )
+    assert any("without filtering to status==offline" in f for f in findings)
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), (
+        "an unsafe reaper satisfied the backstop requirement — the rule would demand a hazard"
+    )
+
+
+def test_a_repo_that_does_not_register_org_runners_is_out_of_scope(tmp_path):
+    """★ KNOWN-NEGATIVE: this rule must not demand a runner reaper of every repository."""
+    assert (
+        _dir(
+            tmp_path,
+            **{
+                "ci.yml": "on:\n  push:\njobs:\n  t:\n    steps:\n      - run: pytest\n"
+            },
+        )
+        == []
+    )
+
+
+def test_a_per_run_dereg_alone_is_not_a_backstop(tmp_path):
+    """★★ THE DISTINCTION THE LOOP TURNS ON. Per-run cleanup is correct and insufficient:
+    it cannot drain registrations left by runs that were throttled or killed before reaching
+    it. `runner-teardown.yml` does its job properly and the count still reached 3,025."""
+    findings = _dir(
+        tmp_path, **{"runner-pool.yml": POOL, "runner-teardown.yml": PER_RUN_DEREG}
+    )
+    assert findings, "a per-run dereg was accepted as a backstop"
+
+
+def test_an_unreadable_workflow_is_reported_not_skipped(tmp_path):
+    """★ Otherwise a repo looks compliant because its only backstop failed to parse."""
+    (tmp_path / "reap-broken.yml").write_text("this: [is: not: valid")
+    findings = check_directory(tmp_path)
+    assert findings and "was NOT checked" in findings[0]
+
+
+def test_the_yaml_boolean_on_key_is_handled(tmp_path):
+    """★ A bare `on:` parses as True, not "on" — read naively, the scheduled reaper looks
+    trigger-less and the known-good would fail."""
+    findings = _dir(
+        tmp_path,
+        **{"runner-pool.yml": POOL, "reap-offline-runners.yml": SCHEDULED_SAFE},
+    )
+    assert findings == [], "the boolean-key trap is unhandled: a real known-good failed"
+
+
+# ===========================================================================
+# ADOPTION. Until #145 there was nothing to adopt, so this rule looked only for a
+# LOCAL `-X DELETE`. Once the reusable reaper shipped, the DELETE lived in df-cicd
+# and a consumer that wired it CORRECTLY still failed the rule demanding it.
+#
+# Measured on just-akash before this change: FAIL with no backstop, and STILL FAIL
+# with a correct sha-pinned `uses:` in place. A rule that fails the compliant path
+# teaches consumers to write another repo-local reaper — the exact divergence the
+# standard exists to prevent.
+# ===========================================================================
+
+CANONICAL = (
+    "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml"
+)
+SHA = "91eb19a913c640cbff6181ded1fb93d849fad4ad"
+
+PRODUCER = """
+on: {workflow_call: {}}
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh api "orgs/$ORG/actions/runners?per_page=100"
+          # RUNNER_SCOPE=org  RUNNER_NAME_PREFIX=fixture-   (the creation act; see POOL)
+"""
+
+
+def _adopting(ref, scheduled=True):
+    trigger = 'schedule: [{cron: "0 * * * *"}]' if scheduled else "workflow_call: {}"
+    return (
+        "\non:\n  "
+        + trigger
+        + "\njobs:\n  reap:\n    uses: "
+        + CANONICAL
+        + "@"
+        + ref
+        + "\n    with:\n      org: some-org\n      name-prefixes: some-\n"
+    )
+
+
+def _adopt_dir(tmp_path, reaper_text):
+    return _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper_text})
+
+
+def test_known_good_a_scheduled_sha_pinned_adoption_satisfies_the_rule(tmp_path):
+    """The case that FAILED before this change while being exactly right."""
+    assert _adopt_dir(tmp_path, _adopting(SHA)) == []
+
+
+def test_known_bad_an_unpinned_adoption_fails_BOTH_ways(tmp_path):
+    """A tag moves, so behaviour can change with no commit here.
+
+    It must be REPORTED and must NOT count — otherwise the rule degrades to "mention
+    the reaper somewhere" and the pin quietly stops being enforced.
+    """
+    findings = _adopt_dir(tmp_path, _adopting("main"))
+    assert any("not a 40-hex commit" in f for f in findings), findings
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), (
+        f"an unpinned adoption was still counted toward the requirement: {findings}"
+    )
+
+
+def test_known_bad_a_moving_TAG_is_not_a_pin_either(tmp_path):
+    """`@v2.7.1` reads as immutable and is not — df-cicd's own usage example shows it."""
+    findings = _adopt_dir(tmp_path, _adopting("v2.7.1"))
+    assert any("not a 40-hex commit" in f for f in findings), findings
+
+
+def test_known_bad_a_pinned_call_to_SOME_OTHER_workflow_is_not_adoption(tmp_path):
+    """Otherwise any pinned `uses:` at all would satisfy a de-registration rule."""
+    other = _adopting(SHA).replace(
+        CANONICAL, "Someone-Else/other/.github/workflows/nope.yml"
+    )
+    findings = _adopt_dir(tmp_path, other)
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), findings
+
+
+def test_an_UNSCHEDULED_adoption_does_not_satisfy_the_rule_yet(tmp_path):
+    """A `workflow_call` wrapper EXPORTS a backstop; it does not RUN one.
+
+    ⚠ Deliberately still a FAIL, and it is the state just-akash#186 is in — a library
+    repo holds neither the PAT nor the org, so it cannot schedule. Expressing "the
+    obligation transfers to the caller" is a separate rule; until that exists this must
+    not silently pass, because an unscheduled reaper drains nothing.
+    """
+    findings = _adopt_dir(tmp_path, _adopting(SHA, scheduled=False))
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), findings
+
+
+def test_a_step_level_uses_is_not_a_reusable_workflow_call(tmp_path):
+    """An action cannot de-register; only a job-level `uses:` reaches a reusable workflow."""
+    step_level = (
+        '\non:\n  schedule: [{cron: "0 * * * *"}]\njobs:\n  reap:\n    runs-on: ubuntu-latest\n'
+        "    steps:\n      - uses: " + CANONICAL + "@" + SHA + "\n"
+    )
+    findings = _adopt_dir(tmp_path, step_level)
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), findings
+
+
+# ===========================================================================
+# EXPORT. A library repo registers runners on behalf of its CALLERS: it holds no PAT
+# and cannot know the org, so a cron there authenticates with an empty secret against
+# a guessed org — a backstop that reaps nothing and reports success.
+#
+# ⚠ The exemption must be VERIFIED, never claimed, or "library repo" becomes an opt-out
+# anybody asserts by deleting their cron. The dodge tests below are the whole point:
+# a repo that converts its scheduled reaper to `workflow_call` still fails, because it
+# still holds the credential or still names the org.
+# ===========================================================================
+
+EXPORTER = (
+    "\non:\n  workflow_call:\n    inputs:\n      github-org:\n        required: true\n"
+    "        type: string\n    secrets:\n      GH_RUNNER_PAT:\n        required: true\n"
+    "jobs:\n  reap:\n    uses: " + CANONICAL + "@" + SHA + "\n"
+    "    with:\n      org: ${{ inputs.github-org }}\n      name-prefixes: some-\n"
+    "    secrets:\n      runner-pat: ${{ secrets.GH_RUNNER_PAT }}\n"
+)
+
+
+def test_known_good_a_library_repo_that_EXPORTS_the_backstop_satisfies_it(tmp_path):
+    """★ just-akash#186's exact shape: callable, caller-supplied org AND credential."""
+    assert _adopt_dir(tmp_path, EXPORTER) == []
+
+
+def test_known_bad_the_DODGE_hard_coding_the_org(tmp_path):
+    """Knowing the org means it could have scheduled itself, so it must."""
+    dodge = EXPORTER.replace("org: ${{ inputs.github-org }}", "org: my-actual-org")
+    findings = _adopt_dir(tmp_path, dodge)
+    assert any("hard-codes org" in f for f in findings), findings
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), (
+        f"the dodge was accepted as an export: {findings}"
+    )
+
+
+def test_known_bad_the_DODGE_handing_over_its_OWN_repo_secret(tmp_path):
+    """Holding the credential means it could have scheduled itself, so it must."""
+    dodge = EXPORTER.replace(
+        "    secrets:\n      GH_RUNNER_PAT:\n        required: true\n", ""
+    )
+    findings = _adopt_dir(tmp_path, dodge)
+    assert any("OWN secret" in f for f in findings), findings
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), findings
+
+
+def test_known_bad_an_exporter_that_passes_no_secret_cannot_authenticate(tmp_path):
+    dodge = EXPORTER.replace(
+        "    secrets:\n      runner-pat: ${{ secrets.GH_RUNNER_PAT }}\n", ""
+    )
+    findings = _adopt_dir(tmp_path, dodge)
+    assert any("passes no secret" in f for f in findings), findings
+
+
+def test_known_bad_neither_scheduled_nor_callable_is_not_an_export(tmp_path):
+    """`workflow_dispatch` only: nothing will ever run it on its own."""
+    orphan = EXPORTER.replace(
+        "on:\n  workflow_call:\n    inputs:\n      github-org:\n        required: true\n"
+        "        type: string\n    secrets:\n      GH_RUNNER_PAT:\n        required: true\n",
+        "on:\n  workflow_dispatch: {}\n",
+    )
+    findings = _adopt_dir(tmp_path, orphan)
+    assert any("neither scheduled nor callable" in f for f in findings), findings
+
+
+def test_an_export_does_not_excuse_an_UNSAFE_local_reaper(tmp_path):
+    """The export discharges the CADENCE obligation, never the busy-safety one."""
+    findings = _dir(
+        tmp_path,
+        **{"pool.yml": PRODUCER, "reap.yml": EXPORTER, "unsafe.yml": SCHEDULED_UNSAFE},
+    )
+    assert any("without filtering to status==offline" in f for f in findings), findings
+
+
+# ===========================================================================
+# THE ESCAPED QUOTE. A jq program inside a DOUBLE-quoted shell string is written
+# `select(.status == \"offline\")`. The original OFFLINE_FILTER demanded a bare `"`,
+# so it missed that spelling — and reported Blazing-Back/akash-close.yml:167, which
+# DOES filter offline, as a busy-safety hazard. Through the same code path it also
+# refused to count the workflow toward the requirement: two false findings against a
+# repo doing it right, from one missing `\?`.
+#
+# ⇒ The rule committed the defect the rule is about: reporting on the SPELLING it
+# expected rather than the PROPERTY it claims to check.
+# ===========================================================================
+
+_SAFE_SPELLINGS = [
+    'select(.status == "offline")',
+    'select(.status == \\"offline\\")',
+    "select(.status == 'offline')",
+    '.status=="offline"',
+    '.status==\\"offline\\"',
+]
+
+
+@pytest.mark.parametrize("selector", _SAFE_SPELLINGS)
+def test_every_safe_offline_spelling_is_recognised(tmp_path, selector):
+    reaper = (
+        '\non:\n  schedule: [{cron: "0 * * * *"}]\njobs:\n  reap:\n    runs-on: ubuntu-latest\n'
+        "    steps:\n      - run: |\n"
+        '          IDS=$(gh api "orgs/$ORG/actions/runners" --jq \'.runners[] | '
+        + selector
+        + " | .id')\n"
+        '          for id in $IDS; do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done\n'
+    )
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert findings == [], (
+        f"{selector!r} was not recognised as an offline filter: {findings}"
+    )
+
+
+@pytest.mark.parametrize(
+    "selector", ['select(.status == "online")', 'select(.status == \\"online\\")']
+)
+def test_an_online_selector_is_still_a_hazard_however_it_is_quoted(tmp_path, selector):
+    """The widened pattern must not have started accepting the unsafe predicate."""
+    reaper = (
+        '\non:\n  schedule: [{cron: "0 * * * *"}]\njobs:\n  reap:\n    runs-on: ubuntu-latest\n'
+        "    steps:\n      - run: |\n"
+        '          IDS=$(gh api "orgs/$ORG/actions/runners" --jq \'.runners[] | '
+        + selector
+        + " | .id')\n"
+        '          for id in $IDS; do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done\n'
+    )
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert any("without filtering to status==offline" in f for f in findings), findings
+
+
+# ===========================================================================
+# ⛔ TOUCHING THE ORG RUNNER API IS NOT REGISTERING RUNNERS.
+#
+# The old predicate was `orgs/.../actions/runners`, which the reaper df-cicd PUBLISHES
+# matches on all four of its own lines — three listing GETs and its own DELETE. The rule
+# concluded that the repo shipping the backstop needed a backstop, and that false positive
+# is why it shipped ADVISORY rather than ENFORCING.
+#
+# ⚠ A PATTERN TWEAK CANNOT FIX IT: the DELETE is genuinely present in both a registrar and
+# a reaper, and only the surrounding ROLE differs. The discriminator asks a different
+# question — does this repo CREATE registrations?
+#
+# ⚠ AND `registration-token` IS NOT THAT DISCRIMINATOR, though it is the obvious guess:
+# measured 0 in all three repos, because the runner IMAGE mints the token, not the
+# workflow. A rule built on it scopes NOBODY and passes EVERYONE.
+# ===========================================================================
+
+REAPER_ONLY = """
+on:
+  schedule: [{cron: "0 * * * *"}]
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          gh api --paginate "orgs/$ORG/actions/runners?per_page=100" --jq '.runners[] | select(.status=="offline") | .id' > ids
+          for id in $(cat ids); do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done
+"""
+
+REGISTRAR = """
+on: {workflow_call: {}}
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > sdl.yaml <<EOF
+          services:
+            runner:
+              image: ghcr.io/akash-network/github-runner:latest
+              env:
+                - ACCESS_TOKEN=$GH_RUNNER_PAT
+                - RUNNER_SCOPE=org
+                - RUNNER_NAME_PREFIX=demo-
+          EOF
+"""
+
+
+def test_a_repo_that_only_REAPS_is_not_in_scope(tmp_path):
+    """★★ df-cicd's own shape. It ships the reaper; it registers nothing."""
+    assert _dir(tmp_path, **{"reaper.yml": REAPER_ONLY}) == []
+
+
+def test_a_repo_that_REGISTERS_and_never_reaps_is_in_scope(tmp_path):
+    findings = _dir(tmp_path, **{"pool.yml": REGISTRAR})
+    assert any("registers org runners" in f for f in findings), findings
+
+
+def test_the_DELETE_alone_never_puts_a_repo_in_scope(tmp_path):
+    """⛔ The whole point: the DELETE is present in BOTH roles, so it discriminates nothing."""
+    delete_only = REAPER_ONLY.replace(
+        'schedule: [{cron: "0 * * * *"}]', "workflow_dispatch: {}"
+    )
+    assert _dir(tmp_path, **{"d.yml": delete_only}) == [], (
+        "a workflow that only de-registers was treated as one that registers"
+    )
+
+
+def test_registration_token_alone_would_have_scoped_nobody(tmp_path):
+    """Pins the measurement that killed the obvious design.
+
+    If a future edit makes `registration-token` the sole signal, the REGISTRAR fixture —
+    which mints nothing itself, exactly like the real ones — stops being in scope.
+    """
+    assert "registration-token" not in REGISTRAR
+    assert _dir(tmp_path, **{"pool.yml": REGISTRAR}), (
+        "the registrar fixture must be in scope WITHOUT minting a token itself"
+    )
+
+
+# ===========================================================================
+# ⛔ A REAPER THAT DELEGATES TO A SCRIPT IS STILL A REAPER.
+#
+# blazing's akash-runner-registration-reaper.yml is scheduled and its only step is
+# `bash scripts/akash-runner-reaper.sh`. The listing, the offline filter and the DELETE all
+# live in that script. Reading only `run:` text reported a repo with a WORKING backstop as
+# having none — the same delegation blindness #146 fixed for `uses:`, in a second form.
+# ===========================================================================
+
+DELEGATING_REAPER = """
+on:
+  schedule: [{cron: "13 * * * *"}]
+jobs:
+  reap:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/reap.sh
+"""
+
+REAPER_SCRIPT = """#!/usr/bin/env bash
+IDS=$(gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" \\
+  --jq '.runners[] | select(.status=="offline") | .id')
+for ID in $IDS; do gh api -X DELETE "/orgs/${ORG}/actions/runners/${ID}"; done
+"""
+
+
+def _repo(tmp_path, workflows: dict, scripts: dict | None = None):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    for name, text in workflows.items():
+        (wf / name).write_text(text)
+    for rel, text in (scripts or {}).items():
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    return check_directory(wf)
+
+
+def test_a_script_delegated_reaper_SATISFIES_the_requirement(tmp_path):
+    """★★ blazing's shape. The backstop works; only the checker could not see it."""
+    findings = _repo(
+        tmp_path,
+        {"pool.yml": REGISTRAR, "reaper.yml": DELEGATING_REAPER},
+        {"scripts/reap.sh": REAPER_SCRIPT},
+    )
+    assert findings == [], findings
+
+
+def test_a_delegated_script_that_does_NOT_dereg_still_fails(tmp_path):
+    """The delegation must be followed, not assumed to contain a reaper."""
+    findings = _repo(
+        tmp_path,
+        {"pool.yml": REGISTRAR, "reaper.yml": DELEGATING_REAPER},
+        {"scripts/reap.sh": "#!/usr/bin/env bash\necho 'nothing to see'\n"},
+    )
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), findings
+
+
+def test_a_dotted_script_path_resolves(tmp_path):
+    """⚠ `.lstrip('./')` strips ANY leading dot or slash, so `.github/x.sh` became
+    `github/x.sh` and never resolved. Caught by false findings against four real repos."""
+    wf = DELEGATING_REAPER.replace(
+        "bash scripts/reap.sh", "bash .github/scripts/reap.sh"
+    )
+    findings = _repo(
+        tmp_path,
+        {"pool.yml": REGISTRAR, "reaper.yml": wf},
+        {".github/scripts/reap.sh": REAPER_SCRIPT},
+    )
+    assert findings == [], findings
+
+
+def test_an_ABSOLUTE_host_path_is_not_a_repo_script(tmp_path):
+    """⚠ Blazing-Back runs `/home/pentest/.guardian/run-engagement.sh` — a file on the
+    RUNNER, which cannot exist at check time and is not a backstop. Treating it as an
+    unreadable delegation turned a host-path invocation into a dereg finding."""
+    wf = DELEGATING_REAPER.replace(
+        "bash scripts/reap.sh", "bash /home/someone/.tools/thing.sh"
+    )
+    findings = _repo(tmp_path, {"reaper.yml": wf})
+    assert not any("could not be read" in f for f in findings), findings
+
+
+def test_an_unreadable_repo_script_in_a_SCHEDULED_workflow_is_reported(tmp_path):
+    """Unreadable is not empty — but only where it could change the answer."""
+    findings = _repo(tmp_path, {"pool.yml": REGISTRAR, "reaper.yml": DELEGATING_REAPER})
+    assert any("could not be read" in f for f in findings), findings
+
+
+def test_an_unreadable_script_in_an_UNSCHEDULED_workflow_is_not_a_dereg_finding(
+    tmp_path,
+):
+    """⚠ Otherwise every telemetry and install helper becomes a de-registration finding —
+    measured: 3 such on just-akash and 1 on df-cicd, none of them about reaping."""
+    unscheduled = DELEGATING_REAPER.replace(
+        'schedule: [{cron: "13 * * * *"}]', "workflow_dispatch: {}"
+    )
+    findings = _repo(tmp_path, {"noise.yml": unscheduled})
+    assert not any("could not be read" in f for f in findings), findings
