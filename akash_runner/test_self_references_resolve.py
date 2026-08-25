@@ -136,23 +136,54 @@ def test_every_published_reference_actually_contains_the_file(where, path, ref):
         )
 
 
+# Git's empty tree: present in every repository, contains no paths. Unlike "the root
+# commit", it does not depend on the repo having history OLDER than the file — which a
+# repo split out of another does not have on day one.
+_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def test_a_ref_that_predates_a_file_is_REJECTED():
     """⛔ Known-negative: the containment probe must be able to say NO.
 
-    Uses this repo's own first commit, which cannot contain a file added later. Without
-    this, `_exists_at` returning True unconditionally would make the test above vacuous."""
+    Without this, `_exists_at` returning True unconditionally would make the containment
+    tests vacuous — every stale ref would pass.
+
+    ⚠ This used to use `rev-list --max-parents=0`, i.e. "the root commit cannot contain a
+    file added later". After the split out of df-cicd that is FALSE here: the root commit
+    IS the split, and it added these files, so no ref in this history predates them. The
+    property under test is unchanged — the probe must be able to answer NO — so the
+    control now uses a ref that is guaranteed to lack the path instead of one that
+    happens to. The history-based control is kept below and re-arms itself automatically
+    the moment this repo has a commit older than the file.
+    """
     # ⚠ In a shallow clone `--max-parents=0` returns the shallow BOUNDARY, which is a
     # recent commit and DOES contain the file — the control would pass while proving
     # nothing. test_the_clone_is_deep_enough_to_ANSWER fails first so this cannot happen
     # quietly, and the assert below is a second line of defence.
     assert not _is_shallow(), "shallow clone — the known-negative below would be meaningless"
-    first = subprocess.run(
-        ["git", "rev-list", "--max-parents=0", "HEAD"], cwd=REPO, capture_output=True, text=True
+    path = ".github/workflows/reusable-akash-runner-conformance.yml"
+
+    assert not _exists_at(_EMPTY_TREE, path), (
+        "the containment probe cannot fail — it would pass over any stale ref"
+    )
+
+    # Stronger control, when the history can supply it: the commit immediately BEFORE the
+    # one that introduced the file. Absent while the adding commit is still a root commit;
+    # asserts for real as soon as it is not.
+    adding = subprocess.run(
+        ["git", "log", "--diff-filter=A", "--format=%H", "--", path],
+        cwd=REPO, capture_output=True, text=True,
     ).stdout.split()
-    assert first, "no root commit — cannot construct a known-negative"
-    assert not _exists_at(
-        first[-1], ".github/workflows/reusable-akash-runner-conformance.yml"
-    ), "the containment probe cannot fail — it would pass over any stale ref"
+    if adding:
+        parent = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{adding[-1]}^"],
+            cwd=REPO, capture_output=True, text=True,
+        ).stdout.strip()
+        if parent:
+            assert not _exists_at(parent, path), (
+                f"{path} exists at {parent[:8]}, the commit BEFORE the one that added it — "
+                "the probe is answering from the wrong history"
+            )
 
 
 def test_a_known_present_file_is_ACCEPTED():

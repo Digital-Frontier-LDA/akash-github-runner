@@ -1,0 +1,5 @@
+# Byte-compiled files were TRACKED before this, so every local test run dirtied the
+# tree and invited a stray .pyc into a commit.
+__pycache__/
+*.py[cod]
+.pytest_cache/

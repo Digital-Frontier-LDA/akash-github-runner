@@ -49,21 +49,22 @@ def test_KP_the_real_silenced_close_is_flagged(tmp_path: Path) -> None:
     assert found, "the real silenced close was not flagged — the rule cannot fire on its own subject"
 
 
-def test_KP_it_fires_on_the_ACTUAL_repo_file() -> None:
-    """KP against the artefact itself, not a copy of it.
-
-    ⭐ This is the check that #169 lacked. A fixture can drift from the file it was taken
-    from; running against the real path cannot.
-    """
-    target = _REPO / ".github" / "workflows" / "df-akash-gate.yml"
-    if not target.exists():
-        pytest.skip("df-akash-gate.yml absent — nothing to assert against")
-    found = check_workflow(target)
-    assert found, (
-        "df-akash-gate.yml contains a silenced close (line 82 at time of writing) and the "
-        "rule did not find it. If that line was FIXED, delete this test in the same PR — "
-        "do not weaken the rule to make it pass."
-    )
+# ⛔ RETIRED: test_KP_it_fires_on_the_ACTUAL_repo_file
+#
+# It asserted that .github/workflows/df-akash-gate.yml STILL CONTAINS the silenced close
+# documented in the rule's docstring (df-cicd #1553, line 82), and instructed: "If that
+# line was FIXED, delete this test in the same PR — do not weaken the rule to make it
+# pass." The line WAS fixed — that file now branches explicitly and emits
+# "::error title=Teardown FAILED" when the close fails — so the assertion is now false and
+# forcing it true would mean re-introducing the defect.
+#
+# The property it protected is NOT lost. It guarded against a fixture drifting from the
+# artefact it was copied from; that risk existed only while the artefact still carried the
+# defect. test_KP_the_real_silenced_close_is_flagged keeps the rule honest against `_REAL`,
+# which is the verbatim historical line, and is now a regression pin rather than a mirror
+# of live code.
+#
+# DO NOT restore this test by planting a silenced close back into df-akash-gate.yml.
 
 
 # ── KNs ──────────────────────────────────────────────────────────────────────
@@ -125,11 +126,27 @@ def test_KN_a_comment_describing_the_defect_is_not_the_defect(tmp_path: Path) ->
 
 
 def test_the_population_is_not_empty() -> None:
-    """Non-vacuity pin. A rule that scans nothing reports no findings."""
+    """Non-vacuity pin. A rule that scans nothing reports no findings.
+
+    ⚠ This used to assert the scan found >= 1 finding in this repo, using "a live defect
+    exists" as a proxy for "the rule still works". That proxy inverted the moment the
+    defect was fixed: a clean repo is the GOAL, and a test that fails when you reach it
+    trains people to re-introduce defects or delete the test. Both halves are now asserted
+    directly instead.
+    """
     wfs = sorted((_REPO / ".github" / "workflows").glob("*.yml"))
+    # (a) there is something to scan — otherwise every "no findings" result is vacuous
     assert wfs, "no workflows found — the scan population is empty and every result is vacuous"
-    total = sum(len(check_workflow(w)) for w in wfs)
-    assert total >= 1, (
-        "the rule found nothing anywhere in df-cicd. Either every silenced close was fixed "
-        "(in which case update this pin deliberately) or the rule stopped working."
-    )
+
+    # (b) the scan is LIVE: the same check_workflow used over the corpus above must still
+    #     flag the real historical defect. If the rule silently stopped working, (a) alone
+    #     would keep passing while reporting a clean repo that was never actually examined.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        planted = Path(td) / "planted.yml"
+        planted.write_text(_REAL)
+        assert check_workflow(planted), (
+            "the rule no longer flags the verbatim historical defect (_REAL) — it has "
+            "stopped working, and every clean result over the corpus is meaningless"
+        )

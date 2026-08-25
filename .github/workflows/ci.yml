@@ -40,7 +40,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with: { persist-credentials: false }
+        # ⛔ fetch-depth: 0 is LOAD-BEARING, not tidiness. test_self_references_resolve
+        # asks `git cat-file -e <sha>:<path>` for every published `uses:` ref. In the
+        # default depth-1 clone those objects are absent, so EVERY containment check
+        # reports missing — and worse, `rev-list --max-parents=0 HEAD` returns the
+        # shallow BOUNDARY commit, which DOES contain the file, so the known-negative
+        # control silently stops being negative. The suite now refuses to run shallow
+        # rather than answer wrongly (test_the_clone_is_deep_enough_to_ANSWER).
+        with: { persist-credentials: false, fetch-depth: 0 }
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
