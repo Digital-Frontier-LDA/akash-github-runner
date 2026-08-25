@@ -39,3 +39,45 @@ level — the only variable that differs is the **consumer's** visibility:
 ⇒ `jobs=0` is GitHub refusing one specific pairing, not this repository failing. Publishing this
 repo is what changes the row above, and the row must not be edited to `GREEN` until a run id
 exists for it.
+
+## ⛔ The repos this standard is ABOUT do not consume it
+
+`check_backstop_covers_producers.py` is **ENFORCING**, and its docstring already records — measured
+**2026-08-24** — that `blazing` emits `akash-ci-` and `akash-` with no backstop, and that
+`Blazing-Back`'s `runner-time-to-ready.yml` emits `akash-` with no backstop.
+
+It was right. Measured again **2026-08-25 10:01Z**, org runner listing streamed and counted once:
+
+| repo | emitted prefixes | claimable by a reaper | offline registrations |
+|---|---|---|---|
+| `Borduas-Holdings/blazing` | `akash-integration-`, `akash-ci-`, `akash-fast-pool-`, `akash-e2epool-` | **1 of 4** | 167 |
+| `Borduas-Holdings/Blazing-Back` | `df-core-`, plus `akash-*` from any pre-`30fcc2c84` ref | `df-core-` only | 175 |
+
+342 offline registrations across the two, and the rule that detects exactly this defect has been
+enforcing the whole time.
+
+⚠ **Neither repo calls this standard.** Verified 2026-08-25: no reference to
+`akash-github-runner` or `reusable-akash-runner-conformance.yml` in either repo's `.github/`.
+
+| repo | consumes conformance? |
+|---|---|
+| `Borduas-Holdings/blazing` | **NONE** |
+| `Borduas-Holdings/Blazing-Back` | **NONE** |
+
+### The rung this adds to #154's ladder
+
+This file's own header already says it: *"A standard that has never been consumed has never been
+tested"*, and *"GREEN requires a run id"*. `check_backstop_covers_producers.py` extends the ladder
+to `merged != tested != invoked != enforced != SUFFICIENT`. The measurement above adds one more:
+
+> **`ENFORCED` in the standard is not `ADOPTED` at the consumer.**
+
+A rule can be merged, tested, invoked, enforcing, *and correct about a live defect it has already
+identified by name*, while the repo carrying that defect never executes it. Promotion to ENFORCING
+raises confidence in the **rule**; it says nothing about **coverage of the fleet**. Recorded here
+rather than in a commit message because this file is where the difference between *shipped* and
+*running* is supposed to be impossible to skip.
+
+⚠ Counts are a single 10:01Z sample of a population an hourly reaper is draining — the
+**composition** is the durable finding, the totals are not. And the `1 of 4` figure is `main` as of
+2026-08-25; it moves as either repo changes its labels.
