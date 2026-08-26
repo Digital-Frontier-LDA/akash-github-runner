@@ -126,3 +126,30 @@ def test_a_clean_tree_passes(tmp_path):
     d = _wf(tmp_path, "pool.yml", "jobs:\n  x:\n    env:\n      - RUNNER_SCOPE=org\n")
     r = _run(d)
     assert r.returncode == 0, f"a clean tree was flagged:\n{r.stdout}"
+
+
+def test_a_value_containing_a_detection_token_is_still_a_finding(tmp_path):
+    """REGRESSION (CodeRabbit, #24): `DISABLE_AUTO_UPDATE: echo` is a valid assignment.
+
+    An earlier draft skipped any line containing grep/echo/::error BEFORE testing the
+    assignment shape, so a value that merely contained such a token was accepted — the rule
+    silently passed the exact thing it exists to reject. Anchoring `_ASSIGN` at ^\\s* does the
+    job a blacklist was reaching for, without the hole.
+    """
+    d = _wf(
+        tmp_path, "pool.yml", "jobs:\n  x:\n    env:\n      DISABLE_AUTO_UPDATE: echo\n"
+    )
+    r = _run(d)
+    assert r.returncode == 1, (
+        f"a value containing a detection token was skipped:\n{r.stdout}"
+    )
+
+
+def test_env_list_value_containing_a_token_is_still_a_finding(tmp_path):
+    d = _wf(
+        tmp_path,
+        "pool.yml",
+        "jobs:\n  x:\n    env:\n      - DISABLE_AUTO_UPDATE=grep\n",
+    )
+    r = _run(d)
+    assert r.returncode == 1, f"env-list value with a token was skipped:\n{r.stdout}"

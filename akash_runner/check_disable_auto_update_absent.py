@@ -76,9 +76,17 @@ _ASSIGN = re.compile(
     """,
     re.VERBOSE,
 )
-# Lines that DETECT rather than set — a guard, an echo, an error message. Excluded so a
-# repo may police this variable without tripping the rule that polices it.
-_DETECTS = re.compile(r"\b(grep|echo|::error|::warning|if\s|test\s|\[\[)")
+# ⛔ NO detection-token exclusion, and removing it CLOSED A BYPASS.
+# An earlier draft skipped any line containing grep/echo/::error before testing the
+# assignment shape. `DISABLE_AUTO_UPDATE: echo` is a perfectly valid non-empty assignment
+# whose VALUE happens to contain a detection token — it was silently skipped, so the rule
+# accepted the very thing it exists to reject.
+#
+# The exclusion was never needed: _ASSIGN is anchored at ^\s*, so a guard line such as
+#     if grep -qE '^\s*-\s*DISABLE_AUTO_UPDATE=true' ...
+#     echo "::error::DISABLE_AUTO_UPDATE=true is still set"
+# cannot match it — those start with `if` and `echo`. Anchoring already does the work a
+# blacklist was reaching for, and does it without a hole. (Reported by CodeRabbit on #24.)
 
 
 def _scan(path: Path) -> list[Finding]:
@@ -92,8 +100,6 @@ def _scan(path: Path) -> list[Finding]:
         # A comment EXPLAINING the deletion is the documented fix, not a violation --
         # Blazing-Back's akash-runner.yml carries the whole analysis in comments.
         if stripped.startswith("#"):
-            continue
-        if _DETECTS.search(line):
             continue
         if _ASSIGN.search(line):
             out.append(
