@@ -84,7 +84,8 @@ dereg" and nothing more is satisfiable by a workflow that de-registers EVERY run
 including one mid-job. That would make this rule the cause of a worse outage than the one
 it prevents, which is the shape of the `close-orphans` trap: a naive requirement demanding
 a destructive regression. So a dereg operation only counts toward the requirement if it is
-filtered to offline runners. An unsafe reaper does not satisfy this rule; it fails it.
+filtered to one of the two safe predicates (`status==offline` OR `busy==false`). An unsafe
+reaper does not satisfy this rule; it fails it.
 """
 
 from __future__ import annotations
@@ -145,8 +146,23 @@ CANONICAL_USES = re.compile(re.escape(CANONICAL_REAPER) + r"@(?P<ref>\S+)")
 # can change without a commit in the consumer is not a backstop.
 IMMUTABLE_REF = re.compile(r"\A[0-9a-f]{40}\Z")
 
-# The only safe selector: GitHub reports `status` as "online"/"offline"; a runner mid-job
-# is online with busy=true, so an offline filter can never select a busy runner.
+# The two safe selectors. A reaper must filter to either:
+#   1. status == "offline", OR
+#   2. .busy == false
+#
+# Both are safe because a runner mid-job is online+busy, so neither can select a busy
+# runner. THE ORIGINAL RULE demanded ONLY the offline spelling — a true premise with a
+# false "only". Offline filters out 100% of the live leak's busy half AND 100% of the live
+# leak's online-and-busy half, but the live leak is overwhelmingly the OTHER half:
+# `online AND busy=false`, a starved runner printing "Listening for Jobs". Measured
+# 2026-08-25 by reference_the_leak_metric_is_online_and_idle_not_offline: of 144 live
+# leaks, 119 (83%) are online+idle — invisible to every offline-only reaper.
+#
+# `busy == false` is the STRICTLY BETTER conjunct: it misses 0% of the live leak (the
+# starved runners are exactly `online AND busy=false`) AND never selects a busy runner.
+# The offline spelling is kept on the allowlist so a pre-existing offline-filtered reaper
+# does not need to be rewritten; the rule no longer REQUIRES it.
+#
 # ⚠ THE QUOTE MAY BE BACKSLASH-ESCAPED. A jq program embedded in a DOUBLE-quoted shell
 # string is written `select(.status == \"offline\")`, which is the normal spelling and was
 # live in Blazing-Back/akash-close.yml:167. The original pattern demanded a bare `"`, so it
@@ -157,12 +173,16 @@ IMMUTABLE_REF = re.compile(r"\A[0-9a-f]{40}\Z")
 # ⇒ That is the defect this whole rule is about, committed by the rule: an instrument that
 # reports on the SPELLING it expected rather than the PROPERTY it claims to check.
 #
-# ⚠ KNOWN LIMIT, stated rather than papered over: `select(.status != "online")` is an
-# equally safe filter and is NOT matched. No workflow in the fleet uses it today (checked),
-# and widening to `!=` would also admit genuinely wrong predicates, so this stays an
-# allowlist of proven-safe spellings. A repo using another one gets a false positive, and
-# the fix is to add the spelling here with its evidence — not to loosen the pattern.
-OFFLINE_FILTER = re.compile(r'status\s*==\s*\\?[\x27"]offline\\?[\x27"]')
+# ⚠ KNOWN LIMIT, stated rather than papered over: `select(.status != "online")` and
+# `select(.busy != true)` are equally safe filters and are NOT matched. No workflow in the
+# fleet uses them today (checked), and widening to `!=` would also admit genuinely wrong
+# predicates, so this stays an allowlist of proven-safe spellings. A repo using another one
+# gets a false positive, and the fix is to add the spelling here with its evidence — not
+# to loosen the pattern.
+SAFE_FILTER = re.compile(
+    r"status\s*==\s*\\?[\x27\"]offline\\?[\x27\"]"  # the OFFLINE spelling, kept for parity
+    r"|\.?\s*busy\s*==\s*false"  # .busy == false — bare boolean literal, optionally prefixed with `.`
+)
 
 
 def _on(document: dict[str, Any]) -> dict[str, Any]:
@@ -364,7 +384,7 @@ def check_directory(workflows: Path) -> list[str]:
 
         if not DEREG_OP.search(body_with_delegates):
             continue
-        if not OFFLINE_FILTER.search(body_with_delegates):
+        if not SAFE_FILTER.search(body_with_delegates):
             unsafe_dereg.append(path.name)
             continue
         if "schedule" in _on(document):
@@ -380,9 +400,10 @@ def check_directory(workflows: Path) -> list[str]:
 
     for name in unsafe_dereg:
         findings.append(
-            f"{name}: de-registers org runners without filtering to status==offline — a "
-            f"runner mid-job is online+busy, so this can remove a runner that is executing. "
-            f"It does not satisfy the backstop requirement; it is a hazard."
+            f"{name}: de-registers org runners without filtering to one of the two safe "
+            f"predicates (status==offline or busy==false) — a runner mid-job is online+busy, "
+            f"so this can remove a runner that is executing. It does not satisfy the backstop "
+            f"requirement; it is a hazard."
         )
 
     for name, why_not in near_miss_export:
@@ -395,10 +416,11 @@ def check_directory(workflows: Path) -> list[str]:
         findings.append(
             "this repo registers org runners ("
             + ", ".join(registers_runners)
-            + ") but no workflow performs a SCHEDULED, offline-filtered de-registration. "
-            "Per-run cleanup cannot drain registrations left by runs that were throttled or "
-            "killed, and every survivor makes the next pool's poll cost ceil(org_runners/100) "
-            "requests — the loop that exhausted the core API budget."
+            + ") but no workflow performs a SCHEDULED de-registration filtered to one of "
+            "the two safe predicates (status==offline or busy==false). Per-run cleanup cannot "
+            "drain registrations left by runs that were throttled or killed, and every survivor "
+            "makes the next pool's poll cost ceil(org_runners/100) requests — the loop that "
+            "exhausted the core API budget."
         )
     return findings
 
