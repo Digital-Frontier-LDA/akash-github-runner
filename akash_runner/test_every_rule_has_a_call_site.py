@@ -30,6 +30,22 @@ RULES_DIR = ROOT / "akash_runner"
 
 # Rules whose failure FAILS the consumer's build.
 ENFORCING = {
+    # ⛔ ENFORCING FROM THE START, DELIBERATELY — the usual advisory-then-promote path is
+    # skipped here because the blast radius was MEASURED BEFORE wiring, which is what the
+    # promotion sweep exists to establish:
+    #     just-akash  origin/main -> FAIL, exactly 2 sites (runner-pool.yml:398,
+    #                                sdl/github-runner-probe.yaml:73) — both real
+    #     just-akash  #215 branch -> PASS (the fix satisfies the rule)
+    #     Blazing-Back            -> PASS (59 files) despite owning a guard whose grep and
+    #                                ::error both NAME the variable
+    # That last one caught a false positive in the rule's first draft, which matched the
+    # bare identifier and flagged the detection code as the defect.
+    #
+    # Advisory would have been the wrong state: this is the rule that would have stopped
+    # the 2026-08-26 outage, and check_runner_image_digest_floor sat advisory (#154) doing
+    # exactly that — detecting the condition, exiting 1, and being swallowed into a green
+    # conformance run.
+    "check_disable_auto_update_absent.py",
     "check_standard.py",
     "check_teardown_can_identify.py",
     # Promoted from ADVISORY 2026-08-24 — see the sweep recorded in #154.
