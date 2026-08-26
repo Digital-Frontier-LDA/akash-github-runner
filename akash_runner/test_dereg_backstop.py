@@ -94,7 +94,7 @@ def test_an_unsafe_reaper_is_a_HAZARD_and_does_not_satisfy_the_rule(tmp_path):
     findings = _dir(
         tmp_path, **{"runner-pool.yml": POOL, "reap-all.yml": SCHEDULED_UNSAFE}
     )
-    assert any("without filtering to status==offline" in f for f in findings)
+    assert any("without filtering to one of the two safe predicates" in f for f in findings)
     assert any("no workflow performs a SCHEDULED" in f for f in findings), (
         "an unsafe reaper satisfied the backstop requirement — the rule would demand a hazard"
     )
@@ -310,7 +310,7 @@ def test_an_export_does_not_excuse_an_UNSAFE_local_reaper(tmp_path):
         tmp_path,
         **{"pool.yml": PRODUCER, "reap.yml": EXPORTER, "unsafe.yml": SCHEDULED_UNSAFE},
     )
-    assert any("without filtering to status==offline" in f for f in findings), findings
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), findings
 
 
 # ===========================================================================
@@ -364,7 +364,154 @@ def test_an_online_selector_is_still_a_hazard_however_it_is_quoted(tmp_path, sel
         '          for id in $IDS; do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done\n'
     )
     findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
-    assert any("without filtering to status==offline" in f for f in findings), findings
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), findings
+
+
+# ===========================================================================
+# THE SECOND SAFE PREDICATE: `busy == false`. The original rule demanded ONLY the
+# offline spelling — a true premise with a false "only". Offline filters out 100% of the
+# live leak's busy half AND 100% of the live leak's online-and-busy half, but the live
+# leak is overwhelmingly the OTHER half: `online AND busy=false`, a starved runner
+# printing "Listening for Jobs". Measured 2026-08-25 by
+# reference_the_leak_metric_is_online_and_idle_not_offline: of 144 live leaks, 119 (83%)
+# are online+idle — invisible to every offline-only reaper.
+#
+# `busy == false` is the STRICTLY BETTER conjunct: it misses 0% of the live leak (the
+# starved runners are exactly `online AND busy=false`) AND never selects a busy runner
+# (the rule's whole point — see the module docstring).
+#
+# ⚠ The relaxation must not have removed the guard. Proving both directions:
+#   • every `busy == false` spelling is recognised (positive)
+#   • every `busy == true`  spelling is still a hazard (negative)
+#   • a reaper with NO safety conjunct at all is still a hazard (TEAMLEAD's known-positive)
+# ===========================================================================
+
+_BUSY_FALSE_SPELLINGS = [
+    'select(.busy == false)',
+    'select(.busy==false)',
+    '.busy == false',
+    '.busy==false',
+    # NOTE: `busy == false` and `busy==false` (without a leading `.`) are deliberately
+    # NOT in this list. A bare `busy` in jq is a VARIABLE reference, not a field access,
+    # and the relaxation must not widen the rule to admit variable references. The new
+    # regex's mandatory `\.` enforces the field-access reading.
+]
+
+
+# KNOWN-NEGATIVES. The bypass the FIRST iteration of SAFE_FILTER allowed: a longer
+# identifier ending in `busy` (e.g., `.notbusy`, `.reallybusy`) contains the substring
+# `busy == false`, and a regex without a word-boundary will match it. The fix makes the
+# `.` MANDATORY and adds a `(?<![A-Za-z0-9_])` negative lookbehind, so these are no
+# longer matched. Each of these is a reaper that adds ONE CHARACTER to a field name
+# and was wrongly accepted as safe. Pre-2026-08-26 they all passed; they must all fail.
+_NOT_BUSY_NEGATIVES = [
+    'select(.notbusy == false)',
+    'select(.reallybusy == false)',
+    'select(.busy_actually == false)',
+    'select(.busyman == false)',
+    'select(.mybusy == false)',
+]
+
+
+_BUSY_TRUE_SPELLINGS = [
+    'select(.busy == true)',
+    'select(.busy==true)',
+    '.busy == true',
+    '.busy==true',
+]
+
+
+def _make_reaper_with_selector(selector: str) -> str:
+    return (
+        '\non:\n  schedule: [{cron: "0 * * * *"}]\njobs:\n  reap:\n    runs-on: ubuntu-latest\n'
+        "    steps:\n      - run: |\n"
+        '          IDS=$(gh api "orgs/$ORG/actions/runners" --jq \'.runners[] | '
+        + selector
+        + " | .id')\n"
+        '          for id in $IDS; do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done\n'
+    )
+
+
+@pytest.mark.parametrize("selector", _BUSY_FALSE_SPELLINGS)
+def test_every_safe_busy_false_spelling_is_recognised(tmp_path, selector):
+    """The post-relaxation positive case. Each `busy == false` spelling must pass."""
+    reaper = _make_reaper_with_selector(selector)
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert findings == [], (
+        f"{selector!r} was not recognised as a busy==false filter: {findings}"
+    )
+
+
+@pytest.mark.parametrize("selector", _BUSY_TRUE_SPELLINGS)
+def test_a_busy_true_selector_is_still_a_hazard(tmp_path, selector):
+    """The post-relaxation negative case. The unsafe TWIN must remain flagged.
+
+    If the relaxation started accepting `busy == true`, every busy runner — including
+    one mid-job — would be selected, and the rule would have manufactured the defect
+    it exists to stop. This test pins that direction.
+    """
+    reaper = _make_reaper_with_selector(selector)
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), (
+        f"{selector!r} was accepted as a safe filter — the relaxation removed the guard: {findings}"
+    )
+
+
+@pytest.mark.parametrize("selector", _NOT_BUSY_NEGATIVES)
+def test_a_longer_identifier_containing_busy_is_NOT_recognised(tmp_path, selector):
+    """★ THE BYPASS THE FIRST DRAFT INTRODUCED, regression-locked.
+
+    An earlier draft of SAFE_FILTER used `\\.?\\s*busy\\s*==\\s*false`, making the dot
+    optional — so `select(.notbusy == false)` and `select(.reallybusy == false)`
+    matched, because the SUBSTRING `busy == false` is present inside a longer
+    identifier. Measured 2026-08-26 by CodeRabbit on #25: an unsafe reaper adds ONE
+    CHARACTER to a field name and satisfies the safety rule.
+
+    The fix makes the `.` MANDATORY and adds a `(?<![A-Za-z0-9_])` negative lookbehind.
+    This test enumerates the family of bypasses — longer identifiers ending in `busy`,
+    with either case transitions or word characters — and asserts every one is still
+    flagged as a hazard. If the fix regresses, a regex change has either re-introduced
+    the optional `\.?` or dropped the lookbehind, and this test fires.
+
+    The mirror of `reference_underscore_is_a_word_character_so_b_misses_identifiers`:
+    there a regex boundary was too STRICT and missed tokens; here there was no boundary
+    at all and matched too MUCH.
+    """
+    reaper = _make_reaper_with_selector(selector)
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), (
+        f"{selector!r} was accepted as a safe filter — a longer identifier containing "
+        f"`busy` slipped through; the `.` is no longer mandatory or the word-boundary "
+        f"lookbehind regressed. Findings: {findings}"
+    )
+
+
+def test_a_reaper_with_NO_safety_conjunct_at_all_is_a_hazard(tmp_path):
+    """★ KNOWN-POSITIVE THE RELAXATION MUST NOT HAVE REMOVED.
+
+    A scheduled workflow that DELETEs against runners without any predicate at all
+    reaps everything, including mid-job. The relaxation — accepting `busy == false` in
+    addition to `status == "offline"` — must not have widened the rule so far that an
+    UNFILTERED reaper now passes. Proves both directions: positive (the right filters
+    ARE recognised), negative (the absence of any filter is still a hazard), AND that
+    the absence does NOT count toward the requirement.
+
+    If your relaxation makes this test pass, you have removed the guard rather than
+    corrected it.
+    """
+    reaper = (
+        '\non:\n  schedule: [{cron: "0 * * * *"}]\njobs:\n  reap:\n    runs-on: ubuntu-latest\n'
+        "    steps:\n      - run: |\n"
+        '          IDS=$(gh api "orgs/$ORG/actions/runners" --jq \'.runners[] | .id\')\n'
+        '          for id in $IDS; do gh api -X DELETE "orgs/$ORG/actions/runners/$id"; done\n'
+    )
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), (
+        f"an unfiltered reaper was accepted: {findings}"
+    )
+    assert any("no workflow performs a SCHEDULED" in f for f in findings), (
+        f"an unsafe reaper was counted toward the backstop requirement: {findings}"
+    )
 
 
 # ===========================================================================
