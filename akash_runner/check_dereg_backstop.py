@@ -179,9 +179,18 @@ IMMUTABLE_REF = re.compile(r"\A[0-9a-f]{40}\Z")
 # predicates, so this stays an allowlist of proven-safe spellings. A repo using another one
 # gets a false positive, and the fix is to add the spelling here with its evidence — not
 # to loosen the pattern.
+#
+# ⚠ THE BUSY BRANCH MUST REQUIRE `.busy` AS A FIELD REFERENCE, NOT A SUBSTRING. An earlier
+# draft used `\.?\s*busy\s*==\s*false`, making the dot optional — so `select(.notbusy == false)`
+# and `select(.reallybusy == false)` matched, because the substring `busy == false` is present
+# inside a longer identifier. Measured 2026-08-26: an unsafe reaper adds ONE CHARACTER to a
+# field name and satisfies the safety rule. Mirror of
+# `reference_underscore_is_a_word_character_so_b_misses_identifiers` — there a boundary was
+# too strict, here there was no boundary at all. The fix: the `.` is mandatory, AND a
+# `(?<![A-Za-z0-9_])` negative lookbehind guards against longer-identifier adjacency.
 SAFE_FILTER = re.compile(
     r"status\s*==\s*\\?[\x27\"]offline\\?[\x27\"]"  # the OFFLINE spelling, kept for parity
-    r"|\.?\s*busy\s*==\s*false"  # .busy == false — bare boolean literal, optionally prefixed with `.`
+    r"|(?<![A-Za-z0-9_])\.\s*busy\s*==\s*false"  # .busy == false — MANDATORY dot + word-boundary lookbehind
 )
 
 

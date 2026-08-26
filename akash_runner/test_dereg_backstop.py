@@ -391,8 +391,25 @@ _BUSY_FALSE_SPELLINGS = [
     'select(.busy==false)',
     '.busy == false',
     '.busy==false',
-    'busy == false',
-    'busy==false',
+    # NOTE: `busy == false` and `busy==false` (without a leading `.`) are deliberately
+    # NOT in this list. A bare `busy` in jq is a VARIABLE reference, not a field access,
+    # and the relaxation must not widen the rule to admit variable references. The new
+    # regex's mandatory `\.` enforces the field-access reading.
+]
+
+
+# KNOWN-NEGATIVES. The bypass the FIRST iteration of SAFE_FILTER allowed: a longer
+# identifier ending in `busy` (e.g., `.notbusy`, `.reallybusy`) contains the substring
+# `busy == false`, and a regex without a word-boundary will match it. The fix makes the
+# `.` MANDATORY and adds a `(?<![A-Za-z0-9_])` negative lookbehind, so these are no
+# longer matched. Each of these is a reaper that adds ONE CHARACTER to a field name
+# and was wrongly accepted as safe. Pre-2026-08-26 they all passed; they must all fail.
+_NOT_BUSY_NEGATIVES = [
+    'select(.notbusy == false)',
+    'select(.reallybusy == false)',
+    'select(.busy_actually == false)',
+    'select(.busyman == false)',
+    'select(.mybusy == false)',
 ]
 
 
@@ -437,6 +454,35 @@ def test_a_busy_true_selector_is_still_a_hazard(tmp_path, selector):
     findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
     assert any("without filtering to one of the two safe predicates" in f for f in findings), (
         f"{selector!r} was accepted as a safe filter — the relaxation removed the guard: {findings}"
+    )
+
+
+@pytest.mark.parametrize("selector", _NOT_BUSY_NEGATIVES)
+def test_a_longer_identifier_containing_busy_is_NOT_recognised(tmp_path, selector):
+    """★ THE BYPASS THE FIRST DRAFT INTRODUCED, regression-locked.
+
+    An earlier draft of SAFE_FILTER used `\\.?\\s*busy\\s*==\\s*false`, making the dot
+    optional — so `select(.notbusy == false)` and `select(.reallybusy == false)`
+    matched, because the SUBSTRING `busy == false` is present inside a longer
+    identifier. Measured 2026-08-26 by CodeRabbit on #25: an unsafe reaper adds ONE
+    CHARACTER to a field name and satisfies the safety rule.
+
+    The fix makes the `.` MANDATORY and adds a `(?<![A-Za-z0-9_])` negative lookbehind.
+    This test enumerates the family of bypasses — longer identifiers ending in `busy`,
+    with either case transitions or word characters — and asserts every one is still
+    flagged as a hazard. If the fix regresses, a regex change has either re-introduced
+    the optional `\.?` or dropped the lookbehind, and this test fires.
+
+    The mirror of `reference_underscore_is_a_word_character_so_b_misses_identifiers`:
+    there a regex boundary was too STRICT and missed tokens; here there was no boundary
+    at all and matched too MUCH.
+    """
+    reaper = _make_reaper_with_selector(selector)
+    findings = _dir(tmp_path, **{"pool.yml": PRODUCER, "reap.yml": reaper})
+    assert any("without filtering to one of the two safe predicates" in f for f in findings), (
+        f"{selector!r} was accepted as a safe filter — a longer identifier containing "
+        f"`busy` slipped through; the `.` is no longer mandatory or the word-boundary "
+        f"lookbehind regressed. Findings: {findings}"
     )
 
 
