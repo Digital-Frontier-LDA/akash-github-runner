@@ -1,0 +1,104 @@
+# POPULATION_SCOPED conformance monitor — READ-ONLY, BY DESIGN.
+#
+# ⛔ EYES FIRST, HANDS SECOND, AND just-akash IS THE PROOF. cleanup-stale.yml was given a
+# schedule and it LOOKED like a fix while its aim was wrong; the aim is correct now and it
+# still has no hands. Its own comment records the lesson: "The schedule was never the only
+# thing missing, and fixing only the schedule would have looked like a fix."
+# ⇒ This workflow OBSERVES. It deletes nothing, closes nothing, and has no `--execute`.
+# Wiring hands is a separate, later decision that must follow a non-zero owned set being
+# reconciled BY HAND at least once.
+#
+# WHAT IT WATCHES, AND WHY THESE TWO THINGS. Blazing-Back, just-akash and this repo share
+# exactly two resources: the org runner-registration cap, and the Console escrow grant.
+# Every reaper failure of 2026-08-28 was a failure to reap one of those two. Ownership must
+# follow the shared RESOURCE, not the code — which is why this monitor lives beside the
+# conformance suite rather than inside any one consumer.
+#
+# acceptance-consumer: population-scoped-conformance
+# acceptance-selector: orgs/${ORG}/actions/runners
+# acceptance-live-value: total_count
+
+name: Population conformance monitor
+
+on:
+  schedule:
+    # :17 deliberately avoids :00 and the bid-probe / canary crons — a third job on the
+    # hour stacks API burst against a 5000/hr core budget that has already blinded this
+    # ecosystem's provisioners.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: population-monitor
+  cancel-in-progress: false
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ORG: Borduas-Holdings
+      # The prefixes THIS org's reapers claim to own. Deliberately a declared list, not a
+      # derivation: 2026-08-28 measured that deriving prefixes from the org listing derives
+      # OTHER REPOS' prefixes, because the listing was 100% a sibling's. A derived reaper
+      # would be maximally destructive exactly when the listing is most polluted.
+      CLAIMED_PREFIXES: df-core-
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Observe the shared populations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, "baseline")
+          from check_population import (
+              Unreadable, _gh,
+              rule_reaper_matches_its_population,
+              rule_claimed_population_shrinks,
+          )
+
+          org = os.environ["ORG"]
+          prefixes = [p for p in os.environ["CLAIMED_PREFIXES"].split(",") if p]
+
+          results = [rule_reaper_matches_its_population(org, prefixes)]
+
+          # total_count for the shrinkage rule. ⚠ This saturates at the 10000 org cap; the
+          # rule itself refuses to score a censored reading rather than calling it stable.
+          try:
+              raw = _gh([f"orgs/{org}/actions/runners?per_page=1", "--jq", ".total_count"])
+              current = int(raw.strip())
+          except (Unreadable, ValueError) as exc:
+              print(f"::notice::population count unreadable ({exc}); shrinkage not judged")
+              current = None
+
+          prev = None
+          if os.path.exists("population-state.json"):
+              try:
+                  prev = json.load(open("population-state.json")).get("org_runners")
+              except Exception:
+                  prev = None
+          if current is not None:
+              results.append(rule_claimed_population_shrinks(prev, current, "org runner registrations"))
+
+          worst = 0
+          for r in results:
+              mark = {"pass": "PASS", "fail": "FAIL", "warn": "warn", "n-a": " n/a"}[r.status]
+              print(f"[{mark}] {r.rule}" + (f"  ({r.note})" if r.note else ""))
+              for f in r.findings:
+                  lvl = "error" if f.severity == "required" else "warning"
+                  print(f"::{lvl} title={r.rule}::{f.message}")
+              worst = max(worst, {"pass": 0, "n-a": 0, "warn": 1, "fail": 2}[r.status])
+
+          # ⚠ A WARN DOES NOT FAIL THE JOB, AND THAT IS NOT TIMIDITY. Today `matched=0` is
+          # the CORRECT observation for this org — the registrations belong to a sibling
+          # repo. Failing on it would train everyone to widen the prefix, which is the
+          # destructive act. The annotation is the product; the exit code is not.
+          print(f"::notice::population monitor worst status = {worst} (0 ok, 1 warn, 2 fail)")
+          sys.exit(2 if worst == 2 else 0)
+          PY
