@@ -203,6 +203,7 @@ runs:
           check_context_properties_exist.py
         )
         DIR_SCOPED_ADVISORY=(
+          check_provisioning_is_delegated.py
           check_reaper_schedule.py
           check_funding_gate_is_not_re_derived.py
           check_gate_is_not_re_derived.py
@@ -226,6 +227,15 @@ runs:
           # CONSUMERS.md: 5 PASS, 0 outstanding findings.
           python3 "$ROOT/check_dereg_backstop.py" "$WORKFLOWS_DIR" || rc=1
           advisory check_reaper_schedule.py "$WORKFLOWS_DIR"
+          # ⚠ ADVISORY ON ARRIVAL — blast radius MEASURED, not assumed (2026-08-29):
+          #   blazing       FAIL >=3  akash-ci.yml, akash-integration-new.yml, akash-runner.yml
+          #   Blazing-Back  FAIL   2  akash-runner.yml, runner-time-to-ready.yml
+          #   df-cicd / agr / df-wiki   NOT-JUDGEABLE (exit 3) — they provision nothing
+          # Promotion to enforcing needs BOTH halves, and the second is the one usually
+          # forgotten: the consumer must fix its workflows AND move its pin past this rule.
+          # "Goes green on blazing" alone is UNREACHABLE while blazing pins a SHA predating
+          # the rule — that exact unreachable phrasing has been written here twice.
+          advisory check_provisioning_is_delegated.py "$WORKFLOWS_DIR"
           # ⛔ FUNDING IS A SHARED DECISION, NOT A PER-REPO ONE. akash-lease-core v0.8.0
           # answers it once — quantised, naming WHICH quantity it read, three outcomes,
           # max(SLOT) never the sum. This rule fails a consumer that re-derives it from
