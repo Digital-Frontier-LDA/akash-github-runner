@@ -214,6 +214,7 @@ runs:
           check_runner_image_digest_floor.py
           check_conformance_pin_agrees_with_checker_ref.py
           check_listing_failure_is_loud.py
+          check_provisioning_lives_in_just_akash.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -314,6 +315,20 @@ runs:
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_pool_not_before_consumers.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_runner_image_digest_floor.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ THE STANDARD'S FIRST MANDATE HAD NO RULE (df-wiki#222, gap G1). §1 of
+          # content/platform/akash-github-runners.md: runner provisioning workflows live
+          # ONLY in just-akash, consumed via `uses:` at a pinned ref — and BOTH repos the
+          # page was written about still carry repo-local machinery on main. Detection is
+          # CAPABILITY (registration machinery in comment-stripped run text, the dereg
+          # rule's measured marker set), not the filename — the defect already ships as
+          # ci.yml-shaped names. The publisher exemption is IDENTITY (the platform-set
+          # GITHUB_REPOSITORY, which a workflow author cannot override), not structure:
+          # blazing's local copy is `workflow_call` today and still violates §1.
+          # ADVISORY on arrival: it fails both motivating repos BY DESIGN; blast radius
+          # and the promotion condition (which names the checker-pin bump, without which
+          # "goes green on a consumer" is unsatisfiable) are in the ADVISORY entry in
+          # akash_runner/test_every_rule_has_a_call_site.py.
+          advisory check_provisioning_lives_in_just_akash.py --repo "$GITHUB_REPOSITORY" "$WORKFLOWS_DIR"
           # ⛔ A LISTING THAT SWALLOWS ITS OWN FAILURE REPORTS A CLEAN SWEEP. `|| true` /
           # `2>/dev/null` on the org runner listing turns a 403 into an empty population,
           # and an empty population is indistinguishable from "nothing to reap" — the reaper

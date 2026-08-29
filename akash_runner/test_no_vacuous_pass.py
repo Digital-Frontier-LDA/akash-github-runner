@@ -39,7 +39,11 @@ from conformance_exit import NOT_JUDGEABLE
 
 ROOT = Path(__file__).resolve().parents[1]
 
-DIR_CHECKERS = ["check_reaper_schedule.py", "check_dereg_backstop.py"]
+DIR_CHECKERS = [
+    "check_reaper_schedule.py",
+    "check_dereg_backstop.py",
+    "check_provisioning_lives_in_just_akash.py",
+]
 
 
 def _run(script: str, target: Path):
