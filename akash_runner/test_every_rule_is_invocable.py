@@ -22,6 +22,7 @@ level up, in the instrument itself.
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -113,6 +114,33 @@ def test_rule_runs_under_both_spellings(script: Path) -> None:
     assert codes[0] == codes[1], (
         f"{script.name}: positional gave {codes[0]}, flag gave {codes[1]} — the two "
         f"spellings must be the same call, not two different ones."
+    )
+
+
+def test_the_exclusion_list_cannot_swallow_an_INVOKED_rule() -> None:
+    """⛔ THE ONE WAY THIS SUITE'S POPULATION CAN SILENTLY SHRINK.
+
+    `RULES` is `glob("check_*.py")` minus `_NOT_WORKFLOW_SCOPED`. Nothing stopped a
+    name from being added to that set — and the cheapest way to make a failing
+    invocability test go away is to add the failing rule's name to it. The suite
+    then stays green over a population one rule smaller, which is the exact shape
+    `test_every_rule_is_invocable` was written to prevent one level down.
+
+    An exclusion is only legitimate for a rule the conformance action does not call.
+    If `action.yml` invokes it, it must be covered here — no reason justifies
+    excluding a rule that actually runs against consumers.
+    """
+    action = ROOT.parent / ".github/actions/akash-runner-conformance/action.yml"
+    assert action.is_file(), f"the action moved: {action} — re-read this test"
+    invoked = set(re.findall(r"(check_[a-z0-9_]+\.py)", action.read_text()))
+    assert invoked, "no rule call sites found in action.yml — the shape changed"
+
+    swallowed = sorted(invoked & _NOT_WORKFLOW_SCOPED)
+    assert not swallowed, (
+        "these rules are INVOKED by the conformance action but excluded from the "
+        f"invocability population: {swallowed}. Either cover them here, or remove "
+        "the call site — a rule that runs against consumers cannot be exempt from "
+        "the test that proves it can be called at all."
     )
 
 
