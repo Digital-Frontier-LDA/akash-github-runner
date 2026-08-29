@@ -43,6 +43,8 @@ is the only shape that produces the phase-dependent verdict.
 
 from __future__ import annotations
 
+import _cli
+
 import re
 from typing import Any  # noqa: F401  (parity with sibling rules' signature style)
 
@@ -205,7 +207,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ap = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     ap.add_argument("--workflows-dir", default=".github/workflows")
+    _cli.add_dir_positional(ap)
     args = ap.parse_args(argv)
+    _cli.resolve_dir_positional(ap, args)
     d = Path(args.workflows_dir)
     if not d.is_dir():
         print(f"::warning::{d} is not a directory — funding-projection rule did not run")

@@ -47,6 +47,8 @@ cancellation.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import pathlib
 import re
 import sys
@@ -130,8 +132,10 @@ def check(document: dict) -> list:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--workflows-dir", required=True)
+    _cli.add_dir_positional(ap)
     args = ap.parse_args()
 
+    _cli.resolve_dir_positional(ap, args)
     root = pathlib.Path(args.workflows_dir)
     files = sorted(list(root.glob("*.yml")) + list(root.glob("*.yaml")))
     if not files:

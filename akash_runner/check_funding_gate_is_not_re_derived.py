@@ -55,6 +55,8 @@ checkable, and it expires by itself: rip the primitive out and the rule fails ag
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import importlib.util
 import re
 import sys
@@ -160,9 +162,11 @@ def audit(path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("targets", nargs="+", help="workflow file(s) or a workflows directory")
+    ap.add_argument("targets", nargs="*", help="workflow file(s) or a workflows directory")
+    _cli.add_targets_dir_alias(ap)
     args = ap.parse_args(argv)
 
+    _cli.resolve_targets(ap, args)
     files: list[Path] = []
     for t in args.targets:
         p = Path(t)

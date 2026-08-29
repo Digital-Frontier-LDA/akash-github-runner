@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import json
 import re
 import sys
-from pathlib import Path
+
 from typing import Any
 
 import yaml
@@ -375,7 +377,7 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflow", type=Path)
+    _cli.add_file_target(parser)
     parser.add_argument(
         "--target-kind",
         choices=("auto", "consumer", "pool", "lease-spender"),
@@ -387,6 +389,7 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
+    _cli.resolve_target(parser, args, positional="workflow", flag="workflow_file")
     try:
         document = yaml.safe_load(args.workflow.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:

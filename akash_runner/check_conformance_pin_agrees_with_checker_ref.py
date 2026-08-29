@@ -50,6 +50,8 @@ Exit codes match the other rules:
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
 from pathlib import Path
@@ -128,10 +130,12 @@ def audit(path: Path) -> tuple[list[str], int]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
-        "targets", nargs="+", help="workflow file(s) or a workflows directory"
+        "targets", nargs="*", help="workflow file(s) or a workflows directory"
     )
+    _cli.add_targets_dir_alias(ap)
     args = ap.parse_args(argv)
 
+    _cli.resolve_targets(ap, args)
     files: list[Path] = []
     for t in args.targets:
         p = Path(t)

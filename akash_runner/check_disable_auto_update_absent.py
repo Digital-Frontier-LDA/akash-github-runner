@@ -39,6 +39,8 @@ derived from the workflows dir and `sdl/` is scanned alongside it.
 
 from __future__ import annotations
 
+import _cli
+
 import argparse
 import importlib.util
 import re
@@ -132,8 +134,10 @@ def _targets(workflows_dir: Path) -> list[Path]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workflows-dir", required=True)
+    _cli.add_dir_positional(ap)
     args = ap.parse_args()
 
+    _cli.resolve_dir_positional(ap, args)
     d = Path(args.workflows_dir)
     if not d.is_dir():
         print(f"::warning::{d} is not a directory — nothing to check")

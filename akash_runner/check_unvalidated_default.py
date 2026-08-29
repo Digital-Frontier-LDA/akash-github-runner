@@ -67,6 +67,8 @@ worse — it gets disabled in a week.
 
 from __future__ import annotations
 
+import _cli
+
 import re
 from typing import Any
 
@@ -354,7 +356,9 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--workflows-dir", default=".github/workflows")
+    _cli.add_dir_positional(ap)
     args = ap.parse_args(argv)
+    _cli.resolve_dir_positional(ap, args)
     d = Path(args.workflows_dir)
     if not d.is_dir():
         # Match the sibling convention: print a ::warning, return 0. The conformance
