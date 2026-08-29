@@ -26,6 +26,7 @@ argv. Any link dropped fails here.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -69,13 +70,33 @@ def _run_block() -> str:
 
 def test_the_checker_still_offers_the_third_shape():
     """A control. If check_standard drops `lease-spender`, every other test here is
-    pinning plumbing to a destination that no longer exists — and would still pass."""
-    out = subprocess.run(
-        ["python3", str(ROOT / "akash_runner/check_standard.py"), "--help"],
+    pinning plumbing to a destination that no longer exists — and would still pass.
+
+    ⛔ SPAWN `sys.executable`, NEVER A BARE `python3`. This test used to take whatever
+    `python3` PATH offered, which is NOT the interpreter running pytest. Measured
+    2026-08-29 under `uv run pytest`: PATH's python3 was uv's own, which has no
+    `pyyaml`, so `check_standard.py` died at its `import yaml` before argparse ever
+    ran — rc=1, stdout EMPTY.
+
+    ⚠ AND THE EMPTY STDOUT FAILED THIS ASSERTION WITH THE WORDS "check_standard no
+    longer offers lease-spender" — an environment fault wearing the exact message of
+    the code regression this control exists to catch. It read as a real red on main
+    (597 passed, 1 failed) while CI was green, and CI was the one telling the truth.
+    An instrument that cannot distinguish "the option was removed" from "the program
+    never started" is not a control. Assert the process RAN, then assert what it said.
+    """
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "akash_runner/check_standard.py"), "--help"],
         capture_output=True,
         text=True,
-    ).stdout
-    assert "lease-spender" in out, "check_standard no longer offers lease-spender"
+    )
+    assert proc.returncode == 0, (
+        "check_standard.py --help did not run at all (rc="
+        f"{proc.returncode}) under {sys.executable}. This is an ENVIRONMENT fault, not "
+        f"a dropped option — read stderr before touching check_standard:\n{proc.stderr}"
+    )
+    assert proc.stdout.strip(), "--help exited 0 but printed nothing; the shape changed"
+    assert "lease-spender" in proc.stdout, "check_standard no longer offers lease-spender"
 
 
 def test_the_reusable_exposes_target_kind():
