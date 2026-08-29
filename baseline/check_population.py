@@ -111,8 +111,19 @@ def rule_reaper_matches_its_population(org: str, prefixes: list[str]) -> RuleRes
     """
     rule = "reaper-matches-its-population"
     try:
+        # ⛔ `--paginate` OR THIS READS 1.6% OF THE POPULATION. `per_page=100` alone
+        # returns the FIRST page only. Measured 2026-08-29: Borduas-Holdings held 6,276
+        # registrations = 63 pages, so a declared prefix living on any later page yields
+        # `matched=0` — the exact false-clean this module exists to catch, manufactured by
+        # the module itself. REST `--paginate` advances on Link headers, so a `--jq`
+        # projection cannot break it (unlike the GraphQL loop bug).
         raw = _gh(
-            [f"orgs/{org}/actions/runners?per_page=100", "--jq", ".runners[].name"]
+            [
+                "--paginate",
+                f"orgs/{org}/actions/runners?per_page=100",
+                "--jq",
+                ".runners[].name",
+            ]
         )
     except Unreadable as exc:
         # ⛔ UNREADABLE IS NOT ZERO. Reporting "0 matched" here would manufacture the very

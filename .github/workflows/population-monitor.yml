@@ -8,11 +8,18 @@
 # Wiring hands is a separate, later decision that must follow a non-zero owned set being
 # reconciled BY HAND at least once.
 #
-# WHAT IT WATCHES, AND WHY THESE TWO THINGS. Blazing-Back, just-akash and this repo share
-# exactly two resources: the org runner-registration cap, and the Console escrow grant.
-# Every reaper failure of 2026-08-28 was a failure to reap one of those two. Ownership must
-# follow the shared RESOURCE, not the code — which is why this monitor lives beside the
-# conformance suite rather than inside any one consumer.
+# WHAT IT WATCHES. Blazing-Back, just-akash and this repo share exactly two resources: the
+# org runner-registration cap, and the Console escrow grant. Every reaper failure of
+# 2026-08-28 was a failure to reap one of those two. Ownership must follow the shared
+# RESOURCE, not the code — which is why this monitor lives beside the conformance suite
+# rather than inside any one consumer.
+#
+# ⛔ IT WATCHES ONE OF THE TWO. There is NO Console escrow observation here — no rule reads
+# a grant, so an escrow decrease CANNOT produce a finding. The header used to describe the
+# pair as though both were covered, which is the drift this fleet keeps re-learning: a
+# comment stating a live condition is a dated claim, not a measurement. Escrow coverage
+# needs its own read, its own unreadable handling and its own state key; it is NOT
+# implemented and must not be assumed from this file's presence. Caught in review on #28.
 #
 # acceptance-consumer: population-scoped-conformance
 # acceptance-selector: orgs/${ORG}/actions/runners
@@ -48,6 +55,21 @@ jobs:
       CLAIMED_PREFIXES: df-core-
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      # ⛔ WITHOUT THIS THE SHRINKAGE RULE CANNOT EVER FIRE. The step below READS
+      # population-state.json and nothing ever WROTE it, so `prev` was always None and
+      # `rule_claimed_population_shrinks` compared against nothing on every scheduled run
+      # — a rule that is present, invoked, and structurally incapable of a verdict. A job
+      # filesystem does not survive between scheduled runs, so the persistence has to be
+      # real storage; cache needs no permission beyond the default, unlike committing.
+      # ⚠ A cache entry is EVICTED after 7 days without a hit, so a restored-empty state is
+      # a normal condition and is reported as "no prior observation", never as zero.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: population-state.json
+          key: population-state-${{ github.run_id }}
+          restore-keys: |
+            population-state-
 
       - name: Observe the shared populations
         env:
@@ -85,6 +107,18 @@ jobs:
                   prev = None
           if current is not None:
               results.append(rule_claimed_population_shrinks(prev, current, "org runner registrations"))
+              # ⛔ PERSIST, OR THE NEXT RUN COMPARES AGAINST NOTHING AGAIN. Written only on a
+              # SUCCESSFUL read: recording an unreadable observation would poison the next
+              # comparison with a value that was never measured.
+              with open("population-state.json", "w") as fh:
+                  json.dump({"org_runners": current, "run_id": os.environ.get("GITHUB_RUN_ID", "")}, fh)
+              if prev is None:
+                  print(
+                      "::notice title=population-monitor::First observation persisted "
+                      f"(org_runners={current}). No PRIOR observation existed, so shrinkage "
+                      "was not judged this run — that is a cold start or a 7-day cache "
+                      "eviction, NOT a population that held steady."
+                  )
 
           worst = 0
           for r in results:
@@ -99,6 +133,27 @@ jobs:
           # the CORRECT observation for this org — the registrations belong to a sibling
           # repo. Failing on it would train everyone to widen the prefix, which is the
           # destructive act. The annotation is the product; the exit code is not.
+          # ⛔ AN UNREADABLE POPULATION MUST NOT EXIT GREEN AND SILENT. Every rule that
+          # could not read returns "n-a", which maps to 0 — so a job whose reads ALL failed
+          # was indistinguishable from a job that judged everything and found nothing. That
+          # is the exact false-clean this monitor exists to detect, one level up.
+          # ⚠ The live cause is a TOKEN one: `secrets.GITHUB_TOKEN` cannot read
+          # `GET /orgs/{org}/actions/runners` at all — that needs org-level access the
+          # default token cannot be granted through `permissions:`. Until an org-scoped
+          # token is supplied this monitor judges NOTHING, and it now says so loudly instead
+          # of reporting a clean run. Caught in review on #28.
+          judged = [r for r in results if r.status != "n-a"]
+          if not judged:
+              print(
+                  "::warning title=population-monitor::JUDGED NOTHING — every rule returned "
+                  f"n/a ({len(results)} rule(s)). This is NOT a clean run: the population "
+                  "reads failed or were skipped. If the reads 403'd, the cause is that "
+                  "GITHUB_TOKEN cannot read org runner registrations; supply an org-scoped "
+                  "token. Do not read this job's green tick as coverage."
+              )
+              worst = max(worst, 1)
+
           print(f"::notice::population monitor worst status = {worst} (0 ok, 1 warn, 2 fail)")
+          print(f"::notice::rules judged = {len(judged)} of {len(results)}")
           sys.exit(2 if worst == 2 else 0)
           PY
