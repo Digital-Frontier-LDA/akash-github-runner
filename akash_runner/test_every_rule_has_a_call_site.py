@@ -62,6 +62,27 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
+    "check_listing_failure_is_loud.py": (
+        "ADVISORY because it FAILS A CURRENT CONSUMER TODAY, by design. Measured "
+        "2026-08-29 by running the rule against each workflows dir directly: "
+        "akash-github-runner PASS (rc=0, NON-VACUOUS — 1 workflow actually reads the org "
+        "listing); just-akash PASS (rc=0, NON-VACUOUS — 2 workflows); df-cicd FAIL "
+        "(rc=1, 1 finding) because its FORK of reusable-stale-runner-reaper.yml still "
+        "swallows the listing. The two files are byte-identical apart from 8 comment "
+        "lines, so it is the same defect this PR fixes here. "
+        "⚠ THE PROMOTION CONDITION NAMES THE PIN, because the obvious phrasing is "
+        "UNSATISFIABLE: df-cicd pins the checker at a SHA PREDATING this file, so 'goes "
+        "green on df-cicd' cannot be reached by fixing df-cicd alone — the rule is ABSENT "
+        "at the SHA it executes. Same unreachable shape already recorded for "
+        "check_conformance_pin_agrees_with_checker_ref.py. "
+        "PROMOTE WHEN: df-cicd's `uses:@sha` AND `checker-ref` have both advanced to a SHA "
+        "CONTAINING this file, AND its reaper's listing captures the exit status, AND the "
+        "rule has reported OK (not NOT-JUDGEABLE) on a real conformance run there. "
+        "⚠ Blazing-Back and blazing are OUT OF SCOPE at any tier: cross-org, unreachable "
+        "by this suite, and blazing's live hourly reaper carries this exact defect in "
+        "scripts/akash-runner-reaper.sh — a shell script, not a workflow, so widening the "
+        "rule would not catch it either."
+    ),
     "check_conformance_pin_agrees_with_checker_ref.py": (
         "ADVISORY because it CANNOT YET RUN ON ANY CONSUMER. Both consumers pin the "
         "checker at 6ba4316, which PREDATES this rule, so it is absent at the SHA they "
