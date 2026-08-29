@@ -138,10 +138,32 @@ DEREG_OP = re.compile(r"-X\s+DELETE\s+[\"']?\S*orgs/[^\s\"']*/actions/runners/")
 
 # The reusable reaper a consumer is meant to ADOPT rather than reimplement. Anything else
 # is a repo-local reaper and is judged on its own `run:` text, as before.
-CANONICAL_REAPER = (
-    "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml"
+# ⛔ THIS REPO'S COPY IS CANONICAL (#31, #34), AND THIS CONSTANT DID NOT SAY SO.
+# `reusable-stale-runner-reaper.yml` here declares itself canonical because df-cicd is
+# `visibility=internal`, so its copy is structurally unreachable from Borduas-Holdings —
+# where the runners with the largest footprint live. But THIS rule still recognised only
+# df-cicd's path, so the declaration and the executable check disagreed:
+#
+#   * a consumer that correctly adopted THIS repo's reaper matched nothing here, fell
+#     through to the local-reaper branch with no `run:` text to judge, and was reported
+#     NON-COMPLIANT for doing exactly the right thing;
+#   * and just-akash kept its exporter exemption solely because it still points at
+#     df-cicd — so the only compliant path was the unreachable one.
+#
+# ⚠ BOTH ARE ACCEPTED, DELIBERATELY, AND df-cicd's IS TRANSITIONAL. Dropping df-cicd's
+# path in the same change would strip just-akash's exemption the instant this merged and
+# mark it non-compliant before anyone could repoint it. Remove df-cicd's entry only AFTER
+# its consumers point here — and note the rule reads TEXT: it cannot tell a `uses:` that
+# resolves from one that does not, which is why deleting df-cicd's file while a consumer
+# still names it would leave "an unscheduled reaper wearing the exemption" (see above),
+# undetectable by this check.
+CANONICAL_REAPERS = (
+    "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml",
+    "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml",
 )
-CANONICAL_USES = re.compile(re.escape(CANONICAL_REAPER) + r"@(?P<ref>\S+)")
+CANONICAL_USES = re.compile(
+    "(?:" + "|".join(re.escape(p) for p in CANONICAL_REAPERS) + r")@(?P<ref>\S+)"
+)
 
 # A 40-hex commit. NOT a tag and NOT a branch: both move, and a backstop whose behaviour
 # can change without a commit in the consumer is not a backstop.
