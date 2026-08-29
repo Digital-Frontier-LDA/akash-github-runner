@@ -197,6 +197,7 @@ runs:
         # warning must expand the arrays instead of naming anything by hand. Add rule
         # eleven without touching these and that test fails.
         DIR_SCOPED_ENFORCING=(
+          check_disable_auto_update_absent.py
           check_dereg_backstop.py
           check_backstop_covers_producers.py
           check_context_properties_exist.py
@@ -313,6 +314,18 @@ runs:
           # (ADVISORY entry).
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_pool_not_before_consumers.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ BLOCKING, NOT ADVISORY — this is the rule that would have stopped the
+          # 2026-08-26 outage. A runner with DISABLE_AUTO_UPDATE set REGISTERS and then
+          # receives no jobs; the supervisor restarts it, so one dead lease emits a
+          # registration every ~15s. Measured on just-akash deployment 1787733947684.
+          #
+          # It is blocking where check_runner_image_digest_floor stays advisory because
+          # the two answer different questions. A VERSION FLOOR passes at merge and rots:
+          # GitHub deprecates on a DATE, so today's compliant image is tomorrow's outage
+          # with no code change. AUTO-UPDATE is the only control that survives the NEXT
+          # deprecation, and its absence is a binary, statically-checkable fact that no
+          # digest opacity can hide.
+          python3 "$ROOT/check_disable_auto_update_absent.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
           advisory check_runner_image_digest_floor.py --workflows-dir "$WORKFLOWS_DIR"
           # ⛔ A LISTING THAT SWALLOWS ITS OWN FAILURE REPORTS A CLEAN SWEEP. `|| true` /
           # `2>/dev/null` on the org runner listing turns a 403 into an empty population,
