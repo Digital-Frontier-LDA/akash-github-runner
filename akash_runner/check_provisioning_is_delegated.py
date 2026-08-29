@@ -62,6 +62,8 @@ because a consumer pinned at a SHA predating this rule cannot go green by fixing
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
 from pathlib import Path
@@ -186,8 +188,14 @@ def is_the_provider(workflows: Path) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("workflows", type=Path, default=Path(".github/workflows"), nargs="?")
+    # Both spellings, via the shared helper from #41. Declaring ONLY the positional made
+    # this rule exit 2 on `--workflows-dir` — the fleet-wide flag the conformance action
+    # and every other dir-scoped rule use — so it would look invoked and judge nothing.
+    # Caught by test_every_rule_is_invocable, which #41 added for exactly this: a
+    # convergence that only fixes today's rules expires the moment a new rule lands.
+    _cli.add_dir_target(ap)
     args = ap.parse_args(argv)
+    _cli.resolve_target(ap, args, positional="workflows", flag="workflows_dir")
 
     if not args.workflows.is_dir():
         print(f"Provisioning-delegation: not a directory: {args.workflows}", file=sys.stderr)
