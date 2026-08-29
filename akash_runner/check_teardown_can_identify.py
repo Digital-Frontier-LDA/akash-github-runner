@@ -99,6 +99,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conformance_exit import not_judgeable
 
 # The lifecycle identity a teardown needs in order to close anything.
 IDENTITY = "dseq"
@@ -252,7 +253,10 @@ def main() -> int:
             "was judged. A pass over an empty document is not compliance; check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_teardown_can_identify.py",
+            "the rule observed nothing — see the message above.",
+        )
     findings = check_document(document)
     for finding in findings:
         print(f"::error title=Teardown can identify::{finding}")

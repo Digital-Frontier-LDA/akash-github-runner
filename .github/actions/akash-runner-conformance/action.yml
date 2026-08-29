@@ -57,6 +57,20 @@ inputs:
       below and named in the skip warning; do not restate it here, it drifts.
     required: false
     default: ""
+  not-judgeable:
+    description: >-
+      What to do when a rule exits 3 — NOT-JUDGEABLE: it ran, was called correctly, and its
+      population was empty, so it observed nothing.
+
+      ⛔ `error` (the DEFAULT) preserves today's behaviour exactly: an unjudgeable ENFORCING
+      rule already failed the build, because its floor returned 1. Defaulting to `warn` would
+      turn previously-red builds green — the one direction that breaks a consumer silently,
+      and this action is consumed cross-org by repos we do not own.
+
+      `warn` suits a repo that legitimately has nothing for a rule to judge — one that
+      provisions no runners, say. That is the CALLER's knowledge; a rule cannot have it.
+    required: false
+    default: 'error'
 
 runs:
   using: composite
@@ -70,6 +84,7 @@ runs:
         set -euo pipefail
         python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
         ROOT="$GITHUB_ACTION_PATH/../../../akash_runner"
+        NOT_JUDGEABLE_POLICY="${{ inputs.not-judgeable }}"
 
         # ⛔ EVERY RULE RUNS, AND EVERY STATUS IS KEPT. `set -e` would stop at the first
         # failure and a consumer would fix one rule, re-run, and meet the next — so each
@@ -99,10 +114,32 @@ runs:
         # ⇒ Advisory first so the blast radius is MEASURED, then promoted. The promotion
         # criteria live in the test file beside the reason, so "temporary" has a
         # definition instead of being whatever nobody got round to.
+        # ⛔ EXIT 3 IS "NOT-JUDGEABLE": the rule ran, was called correctly, and its population
+        # was EMPTY — it observed nothing. Neither a pass nor a finding. Before this it shared
+        # exit 1 with real defects, so a fleet sweep could not separate "this rule does not
+        # apply here" from "this repo is broken" without reading prose.
+        # ⚠ NOT exit 2: argparse uses 2 for an unrecognised flag, and rules already use 2 for
+        # "not a directory" — 2 cannot distinguish "I could not judge" from "you called me wrong".
+        #
+        # ⚠ THE ENFORCING CALL SITES BELOW DELIBERATELY KEEP `|| rc=1` AND ARE NOT CONVERTED.
+        # Three tests pin that literal (test_every_rule_has_a_call_site.py:348 by regex,
+        # test_teardown_can_identify.py:191 by string, test_skipped_rules_are_announced.py by
+        # reasoning). `|| rc=1` is how the suite PROVES a rule is enforcing; a wrapper would
+        # trade that guarantee for this one. Exit 3 is non-zero, so an enforcing rule that
+        # judged nothing still fails the build exactly as before — which is what backward
+        # compatibility requires. Converting them is a separate change with its own tests.
         advisory() {
           local script="$1"; shift
-          if python3 "$ROOT/$script" "$@"; then
+          local rc_local=0
+          python3 "$ROOT/$script" "$@" || rc_local=$?
+          if [ "$rc_local" -eq 0 ]; then
             echo "advisory ${script}: PASS"
+          elif [ "$rc_local" -eq 3 ]; then
+            if [ "${NOT_JUDGEABLE_POLICY:-error}" = "warn" ]; then
+              echo "::notice title=NOT-JUDGEABLE — ${script}::Observed nothing here, and this repo declares that acceptable. NOT a pass."
+            else
+              echo "::warning title=NOT-JUDGEABLE — ${script}::Observed nothing — an EMPTY population, not a clean one. Advisory, so the build is unaffected; set \`not-judgeable: warn\` if that is expected here."
+            fi
           else
             echo "::warning title=ADVISORY — ${script} (not yet enforced, see #154)::This rule is not failing the build yet. Its findings are above. It will be promoted to enforcing once its blast radius across consumers has been measured."
           fi

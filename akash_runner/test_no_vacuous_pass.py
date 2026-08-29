@@ -35,6 +35,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conformance_exit import NOT_JUDGEABLE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -54,7 +55,12 @@ def _run(script: str, target: Path):
 def test_an_empty_directory_FAILS_rather_than_passing(script, tmp_path):
     """★★ THE FLOOR. 'I found nothing to check' is not 'you comply'."""
     r = _run(script, tmp_path)
-    assert r.returncode == 1, (
+    # ⚠ RE-AIMED, not relaxed. The floor now returns NOT_JUDGEABLE (3) so a fleet sweep can
+    # separate "this rule does not apply here" from "this repo is broken". The SEMANTIC these
+    # tests protect — an empty population must never read as a pass — is asserted separately
+    # below and is the part that must never weaken.
+    assert r.returncode != 0, "an empty population read as a PASS"
+    assert r.returncode == NOT_JUDGEABLE, (
         f"{script} passed over an empty population:\n{r.stdout}{r.stderr}"
     )
     assert "found 0 WORKFLOW documents" in (r.stdout + r.stderr)
@@ -78,7 +84,8 @@ def test_pool_owns_teardown_FAILS_on_a_document_with_no_jobs(tmp_path):
     doc = tmp_path / "empty.yml"
     doc.write_text("{}\n")
     r = _run("check_pool_owns_teardown.py", doc)
-    assert r.returncode == 1, f"passed over an empty document:\n{r.stdout}{r.stderr}"
+    assert r.returncode != 0, "an empty document read as a PASS"
+    assert r.returncode == NOT_JUDGEABLE, f"expected NOT_JUDGEABLE:\n{r.stdout}{r.stderr}"
     assert "declares no jobs" in (r.stdout + r.stderr)
 
 
@@ -141,7 +148,8 @@ def test_a_directory_of_NON_workflow_yaml_FAILS(script, tmp_path):
         (tmp_path / name).write_text(text)
     r = _run(script, tmp_path)
     out = r.stdout + r.stderr
-    assert r.returncode == 1, f"{script} passed over 3 non-workflow files:\n{out}"
+    assert r.returncode != 0, f"{script} passed over 3 non-workflow files:\n{out}"
+    assert r.returncode == NOT_JUDGEABLE, f"{script} did not report NOT_JUDGEABLE:\n{out}"
     assert "found 0 WORKFLOW documents" in out, out
 
 

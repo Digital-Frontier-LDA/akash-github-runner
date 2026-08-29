@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conformance_exit import not_judgeable
 
 # A producer names its registrations. The literal prefix is everything before the first
 # shell/Actions interpolation: `RUNNER_NAME_PREFIX=df-core-${RUNNER_LABEL}` -> `df-core-`.
@@ -204,7 +205,10 @@ def main() -> int:
             "A pass over an empty population is not compliance; check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_backstop_covers_producers.py",
+            "the rule observed nothing — see the message above.",
+        )
     findings = check_directory(args.workflows)
     for finding in findings:
         print(f"::error title=Backstop coverage::{finding}")
