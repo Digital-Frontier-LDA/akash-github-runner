@@ -159,9 +159,24 @@ DEREG_OP = re.compile(r"-X\s+DELETE\s+[\"']?\S*orgs/[^\s\"']*/actions/runners/")
 # resolves from one that does not, which is why deleting df-cicd's file while a consumer
 # still names it would leave "an unscheduled reaper wearing the exemption" (see above),
 # undetectable by this check.
+# ⛔ EVERY PATH LISTED HERE IS ONE THIS RULE ACCEPTS FOREVER, WHETHER OR NOT ANYTHING IS
+# THERE. The exemption is a text match on the CONSUMER's `uses:` plus a 40-hex ref
+# (CANONICAL_USES below); it never asks whether the target exists. df-cicd's copy was
+# retired in df-cicd#191 — leaving it listed would let a consumer keep the backstop
+# exemption while pointing at a DELETED FILE. A silent false green, which is the class this
+# suite exists to remove.
+# ⚠ Removed only AFTER the deletion landed. agr#37 added a guard pinning df-cicd's path as
+# accepted during the migration, precisely so this entry could not be dropped early and
+# strip just-akash's exemption before it repointed. That guard has now done its job and
+# retires with it.
+# ⚠ VERSION SKEW, AND IT IS ASYMMETRIC. Consumers pin this checker by SHA, so a consumer
+# still on a PRE-#42 sha runs the OLD tuple and its `uses:` naming df-cicd STILL PASSES this
+# static check — while the workflow call itself now 404s, because df-cicd#191 deleted the
+# file. PASS is not "working" for that window; it means "judged by a checker that predates
+# the deletion". Bumping the agr pin is what surfaces it, and the finding is then correct.
+# Raised independently by two models in cross-model review of #42.
 CANONICAL_REAPERS = (
     "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml",
-    "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml",
 )
 CANONICAL_USES = re.compile(
     "(?:" + "|".join(re.escape(p) for p in CANONICAL_REAPERS) + r")@(?P<ref>\S+)"

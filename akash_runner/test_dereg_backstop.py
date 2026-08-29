@@ -151,10 +151,15 @@ def test_the_yaml_boolean_on_key_is_handled(tmp_path):
 # standard exists to prevent.
 # ===========================================================================
 
+# Repointed with df-cicd#191: the df-cicd copy is deleted, so a fixture built on its path
+# would exercise a route no consumer can take and no longer proves anything about adoption.
 CANONICAL = (
+    "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml"
+)
+RETIRED_DF_CICD = (
     "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml"
 )
-SHA = "91eb19a913c640cbff6181ded1fb93d849fad4ad"
+SHA = "5d82c5973e01b0067e61e7b65ab97579aed5ffd9"
 
 PRODUCER = """
 on: {workflow_call: {}}
@@ -730,16 +735,62 @@ def test_this_repos_reaper_is_accepted_as_canonical():
     assert CANONICAL_USES.search(f"{AGR_CANONICAL}@" + "a" * 40) is not None
 
 
-def test_df_cicd_path_still_accepted_during_migration():
-    """df-cicd's path stays valid until its consumers repoint.
+def test_the_retired_df_cicd_path_is_no_longer_canonical():
+    """The migration is complete, so the deleted path must stop granting the exemption.
 
-    Dropping it in the same change would strip just-akash's exporter exemption
-    the moment it merged, marking it non-compliant before anyone could act."""
-    old = (
+    This test REPLACES test_df_cicd_path_still_accepted_during_migration, which pinned the
+    opposite and was correct while it stood: dropping the entry early would have stripped
+    just-akash's exporter exemption before it repointed, marking it non-compliant for doing
+    the right thing. The guard fired when I tried exactly that — 10 tests red — and the
+    sequence was corrected to agr#37 -> just-akash#226 -> df-cicd#191 -> here.
+
+    Now that df-cicd#191 has deleted the file, the danger inverts: the exemption is a text
+    match that never checks the target exists, so keeping the path listed would grant a
+    backstop exemption for a `uses:` pointing at nothing."""
+    retired = (
         "Digital-Frontier-LDA/df-cicd"
         "/.github/workflows/reusable-stale-runner-reaper.yml"
     )
-    assert CANONICAL_USES.search(f"{old}@" + "a" * 40) is not None
+    assert CANONICAL_USES.search(f"{retired}@" + "a" * 40) is None, (
+        "df-cicd's reaper was deleted in df-cicd#191; accepting its path would grant the "
+        "dereg-backstop exemption to a consumer pointing at a file that does not exist"
+    )
+
+
+def test_an_exporter_naming_the_RETIRED_path_is_not_exempt(tmp_path):
+    """END-TO-END: the exemption must actually be DENIED, not merely unmatched by a regex.
+
+    ⛔ The two tests below assert REGEX behaviour — that `CANONICAL_USES` does or does not
+    match a string. That is necessary and not sufficient: it proves the constant changed,
+    not that a repo exporting the retired path loses its backstop exemption. A refactor
+    could keep the regex correct and still grant the exemption by another route.
+
+    Raised in cross-model review of #42 (codex-1): "proves only regex behavior — not
+    end-to-end rejection of a retired-path exporter."
+    """
+    retired_exporter = EXPORTER.replace(AGR_CANONICAL, RETIRED_DF_CICD)
+    assert RETIRED_DF_CICD in retired_exporter, (
+        "fixture did not substitute — this test would otherwise exercise the LIVE path "
+        "and pass for the wrong reason"
+    )
+    findings = _adopt_dir(tmp_path, retired_exporter)
+    assert findings, (
+        "a repo whose only backstop is an export naming the RETIRED df-cicd reaper must "
+        "not be exempt — that file was deleted in df-cicd#191, so the exemption would be "
+        "granted for a `uses:` pointing at nothing"
+    )
+
+
+def test_the_surviving_canonical_path_is_still_accepted():
+    """ANTI-VACUITY: the test above must not pass because the matcher stopped matching."""
+    live = (
+        "Digital-Frontier-LDA/akash-github-runner"
+        "/.github/workflows/reusable-stale-runner-reaper.yml"
+    )
+    assert CANONICAL_USES.search(f"{live}@" + "a" * 40) is not None, (
+        "the canonical path must still be accepted — if this fails, the previous test is "
+        "passing because CANONICAL_USES matches nothing at all"
+    )
 
 
 def test_a_lookalike_third_party_path_is_not_canonical():

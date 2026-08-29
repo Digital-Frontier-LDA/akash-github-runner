@@ -104,7 +104,7 @@ def test_an_EXPORTED_backstop_declares_its_coverage(tmp_path):
     """
     exporter = (
         "\non:\n  workflow_call: {}\njobs:\n  reap:\n"
-        "    uses: Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml@"
+        "    uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@"
         + "a"
         * 40
         + "\n"
