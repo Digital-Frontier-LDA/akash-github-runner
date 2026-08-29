@@ -80,7 +80,15 @@ def check_file(path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--workflows", type=Path, default=Path(".github/workflows"))
+    # `--workflows-dir` is the fleet convention every other rule in
+    # .github/actions/akash-runner-conformance/action.yml is invoked with. `--workflows`
+    # is kept as an alias so an existing caller does not break, but the conforming spelling
+    # is the one the action passes — a rule whose flag disagrees with its call site exits 2
+    # on argparse and never judges anything.
+    ap.add_argument(
+        "--workflows-dir", "--workflows", dest="workflows", type=Path,
+        default=Path(".github/workflows"),
+    )
     args = ap.parse_args(argv)
 
     if not args.workflows.is_dir():

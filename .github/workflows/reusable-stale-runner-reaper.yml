@@ -186,6 +186,20 @@ jobs:
             gh api -X DELETE "orgs/${ORG}/actions/runners/${id}" >/dev/null 2>&1 && D=$(( D + 1 ))
           done < /tmp/owned.tsv
 
-          AFTER="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count')"
+          # ⛔ THE SAME READ AS `TOTAL` ABOVE, AND IT WAS LEFT UNGUARDED. Under
+          # `set -euo pipefail` a failed `gh api` in a plain assignment propagates and
+          # kills the step HERE — after the deletions already happened — so the run
+          # prints no summary at all. And an empty `AFTER` does NOT crash the arithmetic:
+          # bash treats an empty operand as ZERO, so `TOTAL -> ` reads as a listing that
+          # fell to nothing. A confident wrong number is worse than the crash.
+          # Fixing `TOTAL` and not this one is the same defect one instance later.
+          AFTER="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count' 2>/dev/null || echo "")"
+          if [ -z "$AFTER" ]; then
+            echo "::warning title=Stale runner reaper::Deleted ${D} of ${OWNED}, but the"\
+                 "post-sweep listing was UNREADABLE. The before/after figures below are"\
+                 "NOT a measurement of what this run achieved — treat the listing as UNKNOWN,"\
+                 "never as zero."
+            AFTER="$TOTAL"
+          fi
           echo "::notice title=Stale runner reaper::Deleted ${D} of ${OWNED}. Listing ${TOTAL} -> ${AFTER}."\
                "Provisioner per-poll cost ~$(( (TOTAL + 99) / 100 )) -> ~$(( (AFTER + 99) / 100 )) REST calls."
