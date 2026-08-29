@@ -43,6 +43,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from conformance_exit import not_judgeable
 
 # A listing whose failure is discarded. `|| true` and `2>/dev/null` on the same command
 # that produces the population are the two spellings seen in this fleet.
@@ -146,7 +147,10 @@ def main(argv: list[str] | None = None) -> int:
             "a pass over an empty population is not compliance. Check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_listing_failure_is_loud.py",
+            "the rule observed nothing — see the message above.",
+        )
 
     findings = [f for p in reapers for f in check_file(p)]
     for f in findings:

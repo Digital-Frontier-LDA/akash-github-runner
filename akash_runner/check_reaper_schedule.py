@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conformance_exit import not_judgeable
 
 # Reaper-shaped by name. Deliberately narrow: this rule demands a CRON, and a false
 # positive here is a demand to schedule something that should not be scheduled.
@@ -206,7 +207,10 @@ def main() -> int:
             "A pass over an empty population is not compliance; check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_reaper_schedule.py",
+            "the rule observed nothing — see the message above.",
+        )
     findings = check_directory(args.workflows)
     for finding in findings:
         print(f"::error title=Reaper schedule::{finding}")

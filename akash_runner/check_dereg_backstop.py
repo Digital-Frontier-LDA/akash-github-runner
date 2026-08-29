@@ -98,6 +98,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conformance_exit import not_judgeable
 
 # ⛔ TOUCHING THE ORG RUNNER API IS NOT REGISTERING RUNNERS, and conflating them made this
 # rule fail df-cicd ITSELF. The old predicate was `orgs/.../actions/runners` — which the
@@ -485,7 +486,10 @@ def main() -> int:
             "A pass over an empty population is not compliance; check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_dereg_backstop.py",
+            "the rule observed nothing — see the message above.",
+        )
     findings = check_directory(args.workflows)
     for finding in findings:
         print(f"::error title=Dereg backstop::{finding}")

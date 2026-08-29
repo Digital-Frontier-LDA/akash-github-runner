@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from conformance_exit import not_judgeable
 
 # Outputs that name a reclaimable resource. Publishing one is what puts a workflow in scope.
 LIFECYCLE_IDENTITY = ("dseq",)
@@ -147,7 +148,10 @@ def main() -> int:
             "judged. A pass over an empty document is not compliance; check the path.",
             file=sys.stderr,
         )
-        return 1
+        return not_judgeable(
+            "check_pool_owns_teardown.py",
+            "the rule observed nothing — see the message above.",
+        )
     findings = check(document)
     for finding in findings:
         print(f"::error title=Pool owns teardown::{finding}")
