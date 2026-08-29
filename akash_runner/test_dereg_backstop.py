@@ -693,3 +693,61 @@ def test_an_unreadable_script_in_an_UNSCHEDULED_workflow_is_not_a_dereg_finding(
     )
     findings = _repo(tmp_path, {"noise.yml": unscheduled})
     assert not any("could not be read" in f for f in findings), findings
+
+
+# ===========================================================================
+# The canonical reaper moved to THIS repo (#31/#34). Before that change this
+# rule recognised only df-cicd's path, so a consumer that adopted the copy the
+# workflow itself calls canonical was reported non-compliant. These fail on the
+# old constant.
+# ===========================================================================
+
+from akash_runner.check_dereg_backstop import CANONICAL_USES  # noqa: E402
+
+AGR_CANONICAL = (
+    "Digital-Frontier-LDA/akash-github-runner"
+    "/.github/workflows/reusable-stale-runner-reaper.yml"
+)
+
+
+def _exporter_calling(path: str) -> str:
+    return (
+        "\non:\n  workflow_call:\n    inputs:\n      github-org:\n"
+        "        type: string\n        required: true\n"
+        "    secrets:\n      runner-pat:\n        required: true\n"
+        "jobs:\n  reap:\n"
+        f"    uses: {path}@" + "a" * 40 + "\n"
+        "    with:\n      org: ${{ inputs.github-org }}\n"
+        "    secrets:\n      runner-pat: ${{ secrets.runner-pat }}\n"
+    )
+
+
+def test_this_repos_reaper_is_accepted_as_canonical():
+    """A consumer adopting THIS repo's reaper must satisfy the backstop rule.
+
+    On the old constant only df-cicd's path matched, so the correct adoption
+    matched nothing and the repo was judged as having no backstop at all."""
+    assert CANONICAL_USES.search(f"{AGR_CANONICAL}@" + "a" * 40) is not None
+
+
+def test_df_cicd_path_still_accepted_during_migration():
+    """df-cicd's path stays valid until its consumers repoint.
+
+    Dropping it in the same change would strip just-akash's exporter exemption
+    the moment it merged, marking it non-compliant before anyone could act."""
+    old = (
+        "Digital-Frontier-LDA/df-cicd"
+        "/.github/workflows/reusable-stale-runner-reaper.yml"
+    )
+    assert CANONICAL_USES.search(f"{old}@" + "a" * 40) is not None
+
+
+def test_a_lookalike_third_party_path_is_not_canonical():
+    """Anti-vacuity: the alternation must not have widened into a substring match."""
+    assert (
+        CANONICAL_USES.search(
+            "someone-else/akash-github-runner"
+            "/.github/workflows/reusable-stale-runner-reaper.yml@" + "a" * 40
+        )
+        is None
+    )
