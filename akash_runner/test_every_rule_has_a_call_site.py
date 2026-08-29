@@ -62,6 +62,25 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
+    "check_provisioning_is_delegated.py": (
+        "ADVISORY because it FAILS TWO CURRENT CONSUMERS TODAY, by design. Standard §1 "
+        "mandates that runner provisioning live ONLY in just-akash, consumed via `uses:` at "
+        "a pinned tag, and NOTHING enforced it — the gap was in the RULE SET, not in uptake: "
+        "Blazing-Back already runs this suite cross-org at a pin level with main and still "
+        "violates §1. Blast radius MEASURED 2026-08-29 by running the rule against each "
+        "workflows dir directly: blazing FAIL (>=3 — akash-ci.yml, akash-integration-new.yml, "
+        "akash-runner.yml; a FLOOR, measured over 6 of its 23 workflows); Blazing-Back FAIL "
+        "(2 — akash-runner.yml AND runner-time-to-ready.yml, the second of which a "
+        "filename-keyed check could never surface); df-cicd, akash-github-runner and df-wiki "
+        "NOT-JUDGEABLE (exit 3 — they provision nothing, which is not a pass). "
+        "⚠ THE PROMOTION CONDITION NAMES THE PIN, because the obvious phrasing is "
+        "UNSATISFIABLE: a consumer pinned at a SHA predating this rule cannot go green by "
+        "fixing its workflows, since the rule it would be judged by is not in its pin. "
+        "PROMOTE WHEN: (a) blazing and Blazing-Back have moved provisioning behind "
+        "`uses: <owner>/just-akash/.github/workflows/runner-pool.yml@<tag>`, AND (b) both "
+        "have moved their conformance pin to a SHA containing this rule. Either half alone "
+        "leaves the promotion unreachable."
+    ),
     "check_listing_failure_is_loud.py": (
         "ADVISORY because it FAILS A CURRENT CONSUMER TODAY, by design. Measured "
         "2026-08-29 by running the rule against each workflows dir directly: "
