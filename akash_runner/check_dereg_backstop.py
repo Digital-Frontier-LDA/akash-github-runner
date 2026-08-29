@@ -169,6 +169,12 @@ DEREG_OP = re.compile(r"-X\s+DELETE\s+[\"']?\S*orgs/[^\s\"']*/actions/runners/")
 # accepted during the migration, precisely so this entry could not be dropped early and
 # strip just-akash's exemption before it repointed. That guard has now done its job and
 # retires with it.
+# ⚠ VERSION SKEW, AND IT IS ASYMMETRIC. Consumers pin this checker by SHA, so a consumer
+# still on a PRE-#42 sha runs the OLD tuple and its `uses:` naming df-cicd STILL PASSES this
+# static check — while the workflow call itself now 404s, because df-cicd#191 deleted the
+# file. PASS is not "working" for that window; it means "judged by a checker that predates
+# the deletion". Bumping the agr pin is what surfaces it, and the finding is then correct.
+# Raised independently by two models in cross-model review of #42.
 CANONICAL_REAPERS = (
     "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml",
 )

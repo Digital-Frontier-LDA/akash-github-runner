@@ -156,6 +156,9 @@ def test_the_yaml_boolean_on_key_is_handled(tmp_path):
 CANONICAL = (
     "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml"
 )
+RETIRED_DF_CICD = (
+    "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml"
+)
 SHA = "5d82c5973e01b0067e61e7b65ab97579aed5ffd9"
 
 PRODUCER = """
@@ -751,6 +754,30 @@ def test_the_retired_df_cicd_path_is_no_longer_canonical():
     assert CANONICAL_USES.search(f"{retired}@" + "a" * 40) is None, (
         "df-cicd's reaper was deleted in df-cicd#191; accepting its path would grant the "
         "dereg-backstop exemption to a consumer pointing at a file that does not exist"
+    )
+
+
+def test_an_exporter_naming_the_RETIRED_path_is_not_exempt(tmp_path):
+    """END-TO-END: the exemption must actually be DENIED, not merely unmatched by a regex.
+
+    ⛔ The two tests below assert REGEX behaviour — that `CANONICAL_USES` does or does not
+    match a string. That is necessary and not sufficient: it proves the constant changed,
+    not that a repo exporting the retired path loses its backstop exemption. A refactor
+    could keep the regex correct and still grant the exemption by another route.
+
+    Raised in cross-model review of #42 (codex-1): "proves only regex behavior — not
+    end-to-end rejection of a retired-path exporter."
+    """
+    retired_exporter = EXPORTER.replace(AGR_CANONICAL, RETIRED_DF_CICD)
+    assert RETIRED_DF_CICD in retired_exporter, (
+        "fixture did not substitute — this test would otherwise exercise the LIVE path "
+        "and pass for the wrong reason"
+    )
+    findings = _adopt_dir(tmp_path, retired_exporter)
+    assert findings, (
+        "a repo whose only backstop is an export naming the RETIRED df-cicd reaper must "
+        "not be exempt — that file was deleted in df-cicd#191, so the exemption would be "
+        "granted for a `uses:` pointing at nothing"
     )
 
 
