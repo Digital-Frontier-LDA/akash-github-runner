@@ -17,10 +17,54 @@
 # exhausts the shared PAT, and an exhausted PAT makes the NEXT runner 403 on its registration
 # token, which strands its lease. The registration leak and the escrow leak are one loop.
 #
-# CONSUMER CALL SITE (pin df-cicd to an immutable tag):
+# ⛔ THIS IS THE CANONICAL COPY. df-cicd carries one too (df-cicd#…, agr#31); they differ only
+# in comments, and each named itself canonical. This one wins, and NOT because it is tidier:
+#
+#   repo                                    visibility   reachable from Borduas-Holdings?
+#   Digital-Frontier-LDA/akash-github-runner  public     YES
+#   Digital-Frontier-LDA/just-akash           public     YES
+#   Digital-Frontier-LDA/df-cicd              INTERNAL   NO — structurally, for any org but ours
+#
+# df-cicd is `visibility=internal` with `actions/permissions/access -> access_level:
+# organization`. The runners that most need reaping live in **Borduas-Holdings/Blazing-Back**, a
+# DIFFERENT org, so every `uses: Digital-Frontier-LDA/df-cicd/...` from there resolves to nothing.
+# Blazing-Back measured it on 2026-08-23 by DISPATCHING it:
+#
+#     "Digital-Frontier-LDA/df-cicd/.github/workflows/reusable-stale-runner-reaper.yml@91eb19a9…"
+#     : workflow was not found.
+#
+# The pin was CORRECT — file present at that sha, sha an ancestor of df-cicd main, callee
+# declaring `workflow_call` with matching inputs. Only the ACCESS POLICY blocked it.
+#
+# ⚠ GitHub reports that as "not found", NEVER "forbidden" — so the symptom reads as a bad pin and
+# sends you to re-check the sha, which is the one thing that was fine. See df-cicd#149.
+#
+# ⇒ A canonical copy in df-cicd can never serve the consumer with the largest footprint. That is
+# why the canonical copy is HERE. Verify the premise yourself, statically, in one call:
+#
+#     gh api repos/Digital-Frontier-LDA/df-cicd            --jq .visibility   # -> internal
+#     gh api repos/Digital-Frontier-LDA/akash-github-runner --jq .visibility  # -> public
+#
+# ⛔ TWO CLAIMS LIVE HERE AND THEY MUST NOT BE COLLAPSED. Collapsing them is the error the
+# Blazing-Back header was written to prevent:
+#
+#   1. "agr is the right canonical home."  STATIC. Provable today from visibility alone, above.
+#      This file rests on claim 1 and nothing more.
+#   2. "df-cicd is now reachable cross-org."  NOT PROVABLE BY READING ANYTHING. If df-cicd's
+#      `access_level` is ever set to `enterprise` (an operator action — an Actions security
+#      policy is not a workflow author's to change), a consumer may point back at it, but only
+#      after VERIFYING BY DISPATCH, never by reading the file or the pin.
+#      ⚠ EVERY CHECK CHEAPER THAN AN EXECUTION PASSED WHILE THIS WAS BROKEN.
+#
+# ⚠ df-cicd's copy is NOT deleted by this change, deliberately. A sweep of 78 repos found exactly
+# one caller — `just-akash/reap-stale-runners.yml:83`, itself never scheduled — but "nothing calls
+# it" is a claim with a shelf life, and removing a reusable workflow breaks callers silently and
+# cross-org, where you cannot see them. Re-verify callers immediately before any removal.
+#
+# CONSUMER CALL SITE (pin THIS repo to an immutable sha):
 #   jobs:
 #     reap-stale-runners:
-#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@3e82b18132c39b80a1afaf3d1e7a65453cf73c7d # df-cicd main
+#       uses: Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-stale-runner-reaper.yml@3e82b18132c39b80a1afaf3d1e7a65453cf73c7d # akash-github-runner main
 #       with:
 #         org: my-org
 #         name-prefixes: akash-ci-,akash-integration-
