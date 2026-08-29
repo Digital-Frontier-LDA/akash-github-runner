@@ -12,6 +12,11 @@ from typing import Any
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
@@ -375,7 +380,7 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflow", type=Path)
+    cli_aliases.add_workflow_file(parser)
     parser.add_argument(
         "--target-kind",
         choices=("auto", "consumer", "pool", "lease-spender"),

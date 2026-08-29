@@ -100,6 +100,11 @@ from typing import Any
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 # The lifecycle identity a teardown needs in order to close anything.
 IDENTITY = "dseq"
 
@@ -237,8 +242,9 @@ def check_document(document: dict[str, Any]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflow", type=Path, help="a workflow file")
+    cli_aliases.add_workflow_file(parser)
     args = parser.parse_args()
+    cli_aliases.require_file(args, "workflow", parser)
     try:
         document = yaml.safe_load(args.workflow.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:

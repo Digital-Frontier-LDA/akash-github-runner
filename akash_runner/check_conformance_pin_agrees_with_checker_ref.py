@@ -57,6 +57,11 @@ from typing import Any
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 # The reusable this rule is about. Matched on the FILENAME so a fork or a rename of the
 # owning org still resolves — the contract is the workflow, not the repository path.
 _REUSABLE = "reusable-akash-runner-conformance.yml"
@@ -127,10 +132,9 @@ def audit(path: Path) -> tuple[list[str], int]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument(
-        "targets", nargs="+", help="workflow file(s) or a workflows directory"
-    )
+    cli_aliases.add_multi(ap, "--targets", "targets", "workflow file(s) or a workflows directory")
     args = ap.parse_args(argv)
+    cli_aliases.require_multi(args, "targets", ap)
 
     files: list[Path] = []
     for t in args.targets:

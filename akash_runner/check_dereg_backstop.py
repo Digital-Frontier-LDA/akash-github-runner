@@ -99,6 +99,11 @@ from typing import Any
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 # ⛔ TOUCHING THE ORG RUNNER API IS NOT REGISTERING RUNNERS, and conflating them made this
 # rule fail df-cicd ITSELF. The old predicate was `orgs/.../actions/runners` — which the
 # reaper this repo PUBLISHES matches on all four of its own lines: three listing GETs and
@@ -464,8 +469,9 @@ def _workflow_documents(workflows: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflows", type=Path, help="a .github/workflows directory")
+    cli_aliases.add_workflows_dir(parser)
     args = parser.parse_args()
+    cli_aliases.require_dir(args, "workflows", parser)
     if not args.workflows.is_dir():
         print(f"Dereg backstop: not a directory: {args.workflows}", file=sys.stderr)
         return 2

@@ -47,6 +47,11 @@ from typing import Any, NamedTuple
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 EMITS_PREFIX = re.compile(r"RUNNER_NAME_PREFIX=([A-Za-z0-9._-]*)")
 NAME_FILTER_JQ = re.compile(r"\.name\s*\|\s*startswith\(\s*[\"']([^\"']*)[\"']\s*\)")
 NAME_FILTER_INPUT = re.compile(
@@ -194,10 +199,9 @@ def check(repos: list[Repo]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "repos", type=Path, nargs="+", help="repo roots to audit together"
-    )
+    cli_aliases.add_multi(parser, "--repos", "repos", "repo roots to audit together", value_type=Path)
     args = parser.parse_args()
+    cli_aliases.require_multi(args, "repos", parser)
     described = [r for r in (describe(p) for p in args.repos) if r is not None]
     skipped = [p.name for p in args.repos if describe(p) is None]
     for name in skipped:

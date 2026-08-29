@@ -47,6 +47,11 @@ from typing import Any
 
 import yaml
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 # A producer names its registrations. The literal prefix is everything before the first
 # shell/Actions interpolation: `RUNNER_NAME_PREFIX=df-core-${RUNNER_LABEL}` -> `df-core-`.
 EMITS_PREFIX = re.compile(r"RUNNER_NAME_PREFIX=([A-Za-z0-9._-]*)")
@@ -187,8 +192,9 @@ def check_directory(workflows: Path) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflows", type=Path, help="a .github/workflows directory")
+    cli_aliases.add_workflows_dir(parser)
     args = parser.parse_args()
+    cli_aliases.require_dir(args, "workflows", parser)
     if not args.workflows.is_dir():
         print(f"Backstop coverage: not a directory: {args.workflows}", file=sys.stderr)
         return 2

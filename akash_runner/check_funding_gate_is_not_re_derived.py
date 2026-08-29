@@ -60,6 +60,11 @@ import re
 import sys
 from pathlib import Path
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -160,8 +165,9 @@ def audit(path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("targets", nargs="+", help="workflow file(s) or a workflows directory")
+    cli_aliases.add_multi(ap, "--targets", "targets", "workflow file(s) or a workflows directory")
     args = ap.parse_args(argv)
+    cli_aliases.require_multi(args, "targets", ap)
 
     files: list[Path] = []
     for t in args.targets:

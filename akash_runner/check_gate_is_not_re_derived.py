@@ -36,6 +36,11 @@ import importlib.util
 import sys
 from pathlib import Path
 
+try:  # dual-mode import: script (python3 akash_runner/check_x.py) and package (-m) invocations
+    import cli_aliases
+except ImportError:  # pragma: no cover - package mode only
+    from akash_runner import cli_aliases
+
 _GR_SPEC = importlib.util.spec_from_file_location(
     "akash_runner_gate_registry",
     Path(__file__).resolve().parent / "gate_registry.py",
@@ -51,12 +56,13 @@ audit = _gr.audit
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("targets", nargs="+", help="workflow file(s) or a workflows directory")
+    cli_aliases.add_multi(ap, "--targets", "targets", "workflow file(s) or a workflows directory")
     ap.add_argument(
         "--gate", default="all", choices=["all", *sorted(GATES)],
         help="which registered gate(s) to check (default: all)",
     )
     args = ap.parse_args(argv)
+    cli_aliases.require_multi(args, "targets", ap)
 
     gates = list(GATES.values()) if args.gate == "all" else [GATES[args.gate]]
 
