@@ -41,6 +41,18 @@ Measured 2026-08-29, comment-filtered:
 standard's own opening line says "two repos grew an akash-runner.yml"; the rule finds a SECOND
 provisioner inside one of them, which a filename-keyed check could never have surfaced.
 
+⚠ WHAT THIS SELECTOR CANNOT SEE, named because a NOT-JUDGEABLE that silently covers one of
+these is a pass-shaped answer (found by DEVOPS-core in review; neither is live today):
+
+  * `env:` IS NEVER READ. `RUNNER_NAME_PREFIX` set at job or workflow level, rather than
+    inside a `run:` block, evades the SDL signal entirely.
+  * ONLY `run:` BLOCKS ARE READ. Provisioning reached through `run: bash scripts/provision.sh`
+    (signal lives in the script) or `uses: ./.github/actions/provision-pool` (a local
+    composite — not a run block, and DELEGATE will not match it either) is invisible, and the
+    repo reads NOT-JUDGEABLE rather than flagged.
+    ⚠ This fleet ALREADY writes workflows that way — blazing's reapers are
+    `run: bash scripts/akash-runner-reaper.sh`. It is one refactor from live.
+
 ⚠ ADVISORY ON ARRIVAL. It fails a live consumer on day one, and promotion is gated on a
 condition that is SATISFIABLE — see the PR: both the fix AND the consumer's pin must move,
 because a consumer pinned at a SHA predating this rule cannot go green by fixing its workflows.
@@ -143,10 +155,33 @@ def is_the_provider(workflows: Path) -> bool:
     # `on:` parses as the boolean True in YAML 1.1 — a well-known trap, handled explicitly.
     triggers = doc.get("on", doc.get(True))
     if isinstance(triggers, dict):
-        return "workflow_call" in triggers
-    if isinstance(triggers, list):
-        return "workflow_call" in triggers
-    return triggers == "workflow_call"
+        offered = "workflow_call" in triggers
+    elif isinstance(triggers, list):
+        offered = "workflow_call" in triggers
+    else:
+        offered = triggers == "workflow_call"
+    if not offered:
+        return False
+
+    # ⛔⛔ AND IT MUST ACTUALLY PROVISION. Without this the exemption is SELF-ASSERTABLE and
+    # any repo escapes §1 permanently with a THREE-LINE FILE. Demonstrated by DEVOPS-core in
+    # review, and reproduced here before fixing:
+    #
+    #     build.yml        RUNNER_NAME_PREFIX=evil-  +  just-akash deploy
+    #     runner-pool.yml  name / on: workflow_call / jobs: {noop}
+    #     -> PASS "this repo PUBLISHES runner-pool.yml ... provisioning here is the standard"
+    #     delete only the decoy -> FAIL (1 local provisioner)
+    #
+    # The predicate tested whether a repo CLAIMS to be the provider, not whether it IS one.
+    # A provider PROVISIONS — that is what makes it the provider — so require the signal the
+    # rule already computes.
+    # ⚠ VERIFIED IN BOTH DIRECTIONS against the real file, because the obvious version of
+    # this fix would flag just-akash if its pool delegated the deploy to a script:
+    #     just-akash/.github/workflows/runner-pool.yml -> 1 match
+    #                                                     `- RUNNER_NAME_PREFIX=just-akash-${RUNNER_LABEL}`
+    #     the three-line decoy                         -> 0 matches, correctly flagged
+    provisions, _ = inspect(pool)
+    return provisions
 
 
 def main(argv: list[str] | None = None) -> int:

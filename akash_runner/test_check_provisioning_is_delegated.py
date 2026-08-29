@@ -171,3 +171,65 @@ def test_the_DEPLOY_signal_alone_is_enough(tmp_path):
     _wf(tmp_path, "deploys.yml", LOCAL_PROVISIONER)
     r = _run(tmp_path)
     assert r.returncode == 1, f"the deploy verb alone was not detected (exit {r.returncode})"
+
+
+def test_a_NOOP_runner_pool_does_not_earn_the_exemption(tmp_path):
+    """⛔ THE THREE-LINE DECOY, found by DEVOPS-core in review and reproduced before fixing.
+
+    A repo could exempt itself from §1 permanently by adding a `runner-pool.yml` that
+    declares `on: workflow_call` and does NOTHING:
+
+        build.yml        RUNNER_NAME_PREFIX=evil-  +  just-akash deploy
+        runner-pool.yml  name / on: workflow_call / jobs: {noop}   -> PASS, exit 0
+
+    The predicate tested whether a repo CLAIMS to be the provider, not whether it IS one.
+    A provider PROVISIONS — so the exemption now requires the pool workflow to carry the
+    provisioning signal the rule already computes.
+    """
+    _wf(tmp_path, "build.yml", LOCAL_PROVISIONER)
+    _wf(tmp_path, "runner-pool.yml", """
+name: runner-pool
+on:
+  workflow_call:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo nothing
+""")
+    r = _run(tmp_path)
+    assert r.returncode == 1, (
+        f"a NO-OP runner-pool.yml earned the provider exemption (exit {r.returncode}) — "
+        f"the rule's own escape hatch is a three-line file.\n{r.stdout}{r.stderr}"
+    )
+    assert "build.yml" in r.stdout
+
+
+def test_a_REAL_provider_pool_still_earns_the_exemption(tmp_path):
+    """★ THE OTHER DIRECTION, and the one that makes the fix safe to apply.
+
+    Verified against the REAL just-akash `runner-pool.yml`, which carries
+    `- RUNNER_NAME_PREFIX=just-akash-${RUNNER_LABEL}` in its pool job. The obvious version
+    of this fix would flag just-akash if its pool delegated the deploy to a script; it does
+    not, and that was checked rather than assumed.
+    """
+    _wf(tmp_path, "runner-pool.yml", """
+name: pool
+on:
+  workflow_call:
+    inputs:
+      runner-label: {required: true, type: string}
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > /tmp/sdl.yaml <<'SDL'
+                - RUNNER_NAME_PREFIX=just-akash-${RUNNER_LABEL}
+          SDL
+""")
+    r = _run(tmp_path)
+    assert r.returncode == 0, (
+        f"the real provider shape lost its exemption (exit {r.returncode}) — the fix must "
+        f"kill the decoy WITHOUT flagging just-akash.\n{r.stdout}{r.stderr}"
+    )
