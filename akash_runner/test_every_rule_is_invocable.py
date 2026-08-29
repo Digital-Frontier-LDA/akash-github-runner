@@ -165,6 +165,16 @@ def test_a_targets_rule_refuses_an_empty_target_list(script: Path) -> None:
     # a mutation deleting the CLI guard SURVIVED that assertion, because the second
     # guard produced the same code. Two independent refusals is good defence in depth —
     # but a test that cannot distinguish them is not testing the one it names.
+    # ⛔ WHY A MESSAGE STRING AND NOT THE MACHINE-READABLE MARKER (conformance_exit.py,
+    # #35), WHICH EXISTS FOR EXACTLY THIS PROBLEM. Emitting a marker means NOT calling
+    # `parser.error()` — and `parser.error()` is what preserves argparse's OWN exit code
+    # and stderr shape. That byte-identical refusal is the strongest compatibility
+    # property this change has, and agr is consumed CROSS-ORG at a pinned SHA by a repo
+    # we cannot coordinate with. The compat is worth more than the brittleness costs.
+    #
+    # ⚠ AND THE BRITTLENESS IS THE ACCEPTABLE KIND: rewording the message turns this test
+    # RED, loudly, rather than silently un-guarding. Do not "improve" this into a marker
+    # without first re-proving the argparse-shape compatibility it would forfeit.
     combined = proc.stderr + proc.stdout
     assert "a target is required" in combined, (
         f"{script.name} exited 2, but not from the argument guard this test covers — "
