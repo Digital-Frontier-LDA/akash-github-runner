@@ -105,12 +105,39 @@ jobs:
           # ---- snapshot ---------------------------------------------------------------
           # `--paginate` applies --jq PER PAGE, which is correct here: we want a flat id list,
           # not an aggregate. A `| length` would print one count per page and mislead.
+          # ⛔ A FAILED LISTING IS NOT AN EMPTY ORG. This was `|| true`, so a 403 left
+          #    offline.tsv empty, OFFLINE became 0, and the run reported a clean sweep —
+          #    indistinguishable from an org with nothing to reap. That is the shape that
+          #    let a blocked reaper look healthy for hours.
+          # ⚠ AND THE 403 THAT ACTUALLY HAPPENS IS INVISIBLE TO THE FLOOR ABOVE. The floor
+          #    reads `rate_limit.resources.core`, but the refusals come from GitHub's
+          #    SECONDARY limit, which that endpoint does not report — measured with core at
+          #    4900/5000 while writes 403'd. So the budget guard passes and the listing
+          #    still fails; only this check sees it.
+          set +e
           gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" \
             --jq '.runners[] | select(.status=="offline" and .busy==false) | "\(.id)\t\(.name)"' \
-            > /tmp/offline.tsv || true
+            > /tmp/offline.tsv
+          LIST_RC=$?
+          set -e
 
-          TOTAL="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count')"
+          # The paired control, fetched here already and previously never consulted: an org
+          # total whose zero is impossible while runners demonstrably exist.
+          TOTAL="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count' 2>/dev/null || echo "")"
           OFFLINE="$(wc -l < /tmp/offline.tsv | tr -d ' ')"
+
+          if [ "$LIST_RC" -ne 0 ]; then
+            echo "::error title=Stale runner reaper::LISTING UNREADABLE (gh exited ${LIST_RC})."\
+                 "Reaped NOTHING this cycle. This is NOT a clean sweep — the offline set is"\
+                 "UNKNOWN, and its registrations survive into the next run."
+            exit 1
+          fi
+          if [ -z "$TOTAL" ]; then
+            echo "::error title=Stale runner reaper::org total unreadable, so the listing"\
+                 "cannot be corroborated. Refusing to report ${OFFLINE} offline as a fact."
+            exit 1
+          fi
+          echo "listing OK: total=${TOTAL} offline_idle=${OFFLINE}"
 
           # Keep only names under an owned prefix. Ownership is the NAME, not presence in the
           # org — the org listing is shared, exactly as an Akash wallet is.
@@ -159,6 +186,20 @@ jobs:
             gh api -X DELETE "orgs/${ORG}/actions/runners/${id}" >/dev/null 2>&1 && D=$(( D + 1 ))
           done < /tmp/owned.tsv
 
-          AFTER="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count')"
+          # ⛔ THE SAME READ AS `TOTAL` ABOVE, AND IT WAS LEFT UNGUARDED. Under
+          # `set -euo pipefail` a failed `gh api` in a plain assignment propagates and
+          # kills the step HERE — after the deletions already happened — so the run
+          # prints no summary at all. And an empty `AFTER` does NOT crash the arithmetic:
+          # bash treats an empty operand as ZERO, so `TOTAL -> ` reads as a listing that
+          # fell to nothing. A confident wrong number is worse than the crash.
+          # Fixing `TOTAL` and not this one is the same defect one instance later.
+          AFTER="$(gh api "orgs/${ORG}/actions/runners?per_page=1" --jq '.total_count' 2>/dev/null || echo "")"
+          if [ -z "$AFTER" ]; then
+            echo "::warning title=Stale runner reaper::Deleted ${D} of ${OWNED}, but the"\
+                 "post-sweep listing was UNREADABLE. The before/after figures below are"\
+                 "NOT a measurement of what this run achieved — treat the listing as UNKNOWN,"\
+                 "never as zero."
+            AFTER="$TOTAL"
+          fi
           echo "::notice title=Stale runner reaper::Deleted ${D} of ${OWNED}. Listing ${TOTAL} -> ${AFTER}."\
                "Provisioner per-poll cost ~$(( (TOTAL + 99) / 100 )) -> ~$(( (AFTER + 99) / 100 )) REST calls."

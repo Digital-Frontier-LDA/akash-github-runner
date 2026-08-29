@@ -213,6 +213,7 @@ runs:
           check_pool_not_before_consumers.py
           check_runner_image_digest_floor.py
           check_conformance_pin_agrees_with_checker_ref.py
+          check_listing_failure_is_loud.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -313,6 +314,16 @@ runs:
           advisory check_test_pins_a_literal.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_pool_not_before_consumers.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_runner_image_digest_floor.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ A LISTING THAT SWALLOWS ITS OWN FAILURE REPORTS A CLEAN SWEEP. `|| true` /
+          # `2>/dev/null` on the org runner listing turns a 403 into an empty population,
+          # and an empty population is indistinguishable from "nothing to reap" — the reaper
+          # exits 0 having judged nothing. Measured 2026-08-29: 6,479 offline registrations
+          # in Borduas-Holdings while an hourly sweeper reported success.
+          # ⚠ ADVISORY, not enforcing: df-cicd's FORK of the reusable reaper FAILS this rule
+          # today (measured, 1 finding). Enforcing would red a consumer for a defect nobody
+          # has fixed there yet. Promotion condition is in the ADVISORY entry in
+          # akash_runner/test_every_rule_has_a_call_site.py.
+          advisory check_listing_failure_is_loud.py --workflows-dir "$WORKFLOWS_DIR"
         else
           # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
           # reports nothing is indistinguishable from a rule that passed. `::notice` is
