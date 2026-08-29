@@ -29,10 +29,15 @@ from conformance_exit import MARKER, NOT_JUDGEABLE
 ROOT = Path(__file__).resolve().parent
 
 # Rules whose non-vacuity floor has adopted the third state, verified behaviourally.
+# ⚠ (script, flag-or-None). The suite uses FIVE CLI conventions across its rules (issue #30):
+# most dir-scoped rules take a POSITIONAL path, `check_listing_failure_is_loud.py` takes
+# `--workflows-dir`. A harness that assumed one convention would report the other as broken —
+# which is what happened while writing this, and is the same divergence #32's guard exists for.
 DIR_SCOPED = [
-    "check_backstop_covers_producers.py",
-    "check_dereg_backstop.py",
-    "check_reaper_schedule.py",
+    ("check_backstop_covers_producers.py", None),
+    ("check_dereg_backstop.py", None),
+    ("check_reaper_schedule.py", None),
+    ("check_listing_failure_is_loud.py", "--workflows-dir"),
 ]
 DOC_SCOPED = [
     "check_pool_owns_teardown.py",
@@ -40,11 +45,10 @@ DOC_SCOPED = [
 ]
 
 
-def _run(script: str, target: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(ROOT / script), str(target)],
-        capture_output=True, text=True, timeout=60,
-    )
+def _run(script: str, target: Path, flag: str | None = None) -> subprocess.CompletedProcess:
+    argv = [sys.executable, str(ROOT / script)]
+    argv += ([flag, str(target)] if flag else [str(target)])
+    return subprocess.run(argv, capture_output=True, text=True, timeout=60)
 
 
 @pytest.fixture
@@ -60,9 +64,9 @@ def empty_doc(tmp_path: Path) -> Path:
     return p
 
 
-@pytest.mark.parametrize("script", DIR_SCOPED)
-def test_an_empty_population_is_NOT_JUDGEABLE_not_a_finding(script, empty_dir):
-    r = _run(script, empty_dir)
+@pytest.mark.parametrize("script,flag", DIR_SCOPED)
+def test_an_empty_population_is_NOT_JUDGEABLE_not_a_finding(script, flag, empty_dir):
+    r = _run(script, empty_dir, flag)
     assert r.returncode == NOT_JUDGEABLE, (
         f"{script} exited {r.returncode} on an empty population. 1 is a real finding and 2 is a "
         f"usage error; neither says 'I observed nothing'.\n{r.stdout}{r.stderr}"
@@ -80,11 +84,11 @@ def test_an_empty_document_is_NOT_JUDGEABLE(script, empty_doc):
     assert MARKER in r.stdout
 
 
-@pytest.mark.parametrize("script", DIR_SCOPED)
-def test_a_real_population_is_never_NOT_JUDGEABLE(script):
+@pytest.mark.parametrize("script,flag", DIR_SCOPED)
+def test_a_real_population_is_never_NOT_JUDGEABLE(script, flag):
     """⛔ THE LIMB THAT MAKES THE ABOVE MEAN SOMETHING. A rule returning 3 unconditionally would
     pass every test above; only this one refutes it."""
-    r = _run(script, Path(".github/workflows"))
+    r = _run(script, Path(".github/workflows"), flag)
     assert r.returncode != NOT_JUDGEABLE, (
         f"{script} reported NOT-JUDGEABLE against the repo's own workflows, which are not an "
         f"empty population. The floor is firing when it should not.\n{r.stdout}{r.stderr}"
