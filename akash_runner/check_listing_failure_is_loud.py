@@ -46,12 +46,25 @@ from pathlib import Path
 
 # A listing whose failure is discarded. `|| true` and `2>/dev/null` on the same command
 # that produces the population are the two spellings seen in this fleet.
-_LIST_CMD = re.compile(r"gh api[^\n]*actions/runners[^\n]*", re.IGNORECASE)
-_SWALLOW = re.compile(r"\|\|\s*true\s*$|\|\|\s*echo\s|2>\s*/dev/null")
+# ⛔ WHAT COUNTS AS SWALLOWING, AND WHAT DOES NOT. `2>/dev/null` alone hides stderr and
+# leaves the EXIT STATUS intact — under `set -e` a failed listing still stops the run, so it
+# is NOT a swallow and flagging it is a false positive. What discards the status is a
+# CONSTANT fallback: `|| true`, `|| :`, `|| echo …`. Those make the pipeline succeed no
+# matter what the API said.
+_CONST_FALLBACK = re.compile(r"\|\|\s*(?:true\b|:\s|echo\b)")
+
+# `VAR=$?` — a status capture. Whether it captures anything USEFUL depends on what ran last.
+_RC_CAPTURE = re.compile(r"^\s*[A-Za-z_][A-Za-z0-9_]*=\$\?", re.MULTILINE)
+
+# `[ -z "$VAR" ]` / `[ -n "${VAR}" ]` — the result is tested for emptiness, which is a
+# legitimate way to handle a deliberate fallback: swallow, then refuse to trust the value.
+_EMPTINESS_TEST = re.compile(r"\[\s*-[zn]\s+\"?\$\{?[A-Za-z_]")
 
 
 def _documents(workflows: Path) -> list[Path]:
-    return sorted(p for p in workflows.iterdir() if p.suffix in {".yml", ".yaml"} and p.is_file())
+    return sorted(
+        p for p in workflows.iterdir() if p.suffix in {".yml", ".yaml"} and p.is_file()
+    )
 
 
 def check_file(path: Path) -> list[str]:
@@ -63,17 +76,40 @@ def check_file(path: Path) -> list[str]:
         if "actions/runners" not in cmd:
             continue
         # A single-record probe is a control read, not the population read.
-        if "per_page=1\"" in cmd or "per_page=1'" in cmd:
+        if 'per_page=1"' in cmd or "per_page=1'" in cmd:
             continue
-        tail = text[block.end() : block.end() + 200]
+        tail = text[block.end() : block.end() + 240]
         window = cmd + tail.split("\n\n")[0]
-        if _SWALLOW.search(window) and "LIST_RC" not in window:
+
+        if not _CONST_FALLBACK.search(window):
+            # No constant fallback: the status survives. `2>/dev/null` on its own is fine.
+            continue
+
+        # ⛔ A CONSTANT FALLBACK MAKES A LATER `$?` CAPTURE MEANINGLESS, NOT SAFE.
+        # `gh api … || true` followed by `LIST_RC=$?` captures TRUE's zero — the capture
+        # looks like diligence and records nothing. The previous version of this rule
+        # treated the mere PRESENCE of the string `LIST_RC` as proof of handling, so that
+        # exact shape PASSED, and any file could disarm the rule by naming the variable in
+        # a comment. Caught in review on #29; see test_listing_failure_is_loud.py.
+        fallback_pos = _CONST_FALLBACK.search(window).end()
+        capture_after_fallback = _RC_CAPTURE.search(window, fallback_pos)
+
+        if capture_after_fallback:
             findings.append(
-                f"{path.name}: a runner LISTING swallows its own failure "
-                f"(`|| true` / `2>/dev/null`) without capturing the exit status. "
-                f"A 403 then yields an empty population and the run reports a clean "
-                f"sweep. Capture the status and fail loudly, and corroborate with the "
-                f"org total whose zero is impossible."
+                f"{path.name}: a runner LISTING discards its exit status with a constant "
+                f"fallback (`|| true` / `|| echo`) and then captures `$?` AFTERWARDS — "
+                f"which records the FALLBACK's zero, not the API's status. The capture "
+                f"reads as handling and measures nothing. Capture the status of the "
+                f"command itself (`set +e; cmd; RC=$?; set -e`), or test the result for "
+                f"emptiness and refuse to trust it."
+            )
+        elif not _EMPTINESS_TEST.search(window):
+            findings.append(
+                f"{path.name}: a runner LISTING swallows its own failure with a constant "
+                f"fallback (`|| true` / `|| echo`) and neither captures the exit status "
+                f"nor tests the result for emptiness. A 403 then yields an empty "
+                f"population and the run reports a clean sweep. Corroborate with the org "
+                f"total whose zero is impossible."
             )
     return findings
 
@@ -86,7 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     # is the one the action passes — a rule whose flag disagrees with its call site exits 2
     # on argparse and never judges anything.
     ap.add_argument(
-        "--workflows-dir", "--workflows", dest="workflows", type=Path,
+        "--workflows-dir",
+        "--workflows",
+        dest="workflows",
+        type=Path,
         default=Path(".github/workflows"),
     )
     args = ap.parse_args(argv)
@@ -115,7 +154,9 @@ def main(argv: list[str] | None = None) -> int:
     if findings:
         print(f"Listing-failure: FAIL ({len(findings)} finding(s))")
         return 1
-    print(f"Listing-failure: PASS — {len(reapers)} workflow(s) reading the runner listing")
+    print(
+        f"Listing-failure: PASS — {len(reapers)} workflow(s) reading the runner listing"
+    )
     return 0
 
 

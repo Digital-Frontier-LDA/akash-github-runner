@@ -65,8 +65,8 @@ ADVISORY: dict[str, str] = {
     "check_listing_failure_is_loud.py": (
         "ADVISORY because it FAILS A CURRENT CONSUMER TODAY, by design. Measured "
         "2026-08-29 by running the rule against each workflows dir directly: "
-        "akash-github-runner PASS (rc=0, and NON-VACUOUS — 1 workflow actually reads the "
-        "org listing, so the pass is a judgement and not an empty scan); df-cicd FAIL "
+        "akash-github-runner PASS (rc=0, NON-VACUOUS — 1 workflow actually reads the org "
+        "listing); just-akash PASS (rc=0, NON-VACUOUS — 2 workflows); df-cicd FAIL "
         "(rc=1, 1 finding) because its FORK of reusable-stale-runner-reaper.yml still "
         "swallows the listing. The two files are byte-identical apart from 8 comment "
         "lines, so it is the same defect this PR fixes here. "
