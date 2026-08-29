@@ -35,6 +35,8 @@ re-examines is permanent by default; this one re-examines itself.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
 from pathlib import Path
@@ -186,8 +188,9 @@ def _workflow_documents(workflows: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflows", type=Path, help="a .github/workflows directory")
+    _cli.add_dir_target(parser)
     args = parser.parse_args()
+    _cli.resolve_target(parser, args, positional="workflows", flag="workflows_dir")
     if not args.workflows.is_dir():
         print(f"Reaper schedule: not a directory: {args.workflows}", file=sys.stderr)
         return 2

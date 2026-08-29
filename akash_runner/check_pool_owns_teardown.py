@@ -38,9 +38,11 @@ publication timing stops mattering. See Blazing-Back #1440.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
-from pathlib import Path
+
 from typing import Any
 
 import yaml
@@ -133,8 +135,9 @@ def check(document: dict[str, Any]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflow", type=Path)
+    _cli.add_file_target(parser)
     args = parser.parse_args()
+    _cli.resolve_target(parser, args, positional="workflow", flag="workflow_file")
     try:
         document = yaml.safe_load(args.workflow.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:

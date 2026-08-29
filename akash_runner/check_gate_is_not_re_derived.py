@@ -32,6 +32,8 @@ Exit codes: 0 = no findings, 1 = findings, 2 = the scan itself is broken.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import importlib.util
 import sys
 from pathlib import Path
@@ -51,13 +53,15 @@ audit = _gr.audit
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("targets", nargs="+", help="workflow file(s) or a workflows directory")
+    ap.add_argument("targets", nargs="*", help="workflow file(s) or a workflows directory")
+    _cli.add_targets_dir_alias(ap)
     ap.add_argument(
         "--gate", default="all", choices=["all", *sorted(GATES)],
         help="which registered gate(s) to check (default: all)",
     )
     args = ap.parse_args(argv)
 
+    _cli.resolve_targets(ap, args)
     gates = list(GATES.values()) if args.gate == "all" else [GATES[args.gate]]
 
     files: list[Path] = []

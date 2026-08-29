@@ -91,6 +91,8 @@ reaper does not satisfy this rule; it fails it.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import pathlib
 import re
 import sys
@@ -487,8 +489,9 @@ def _workflow_documents(workflows: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflows", type=Path, help="a .github/workflows directory")
+    _cli.add_dir_target(parser)
     args = parser.parse_args()
+    _cli.resolve_target(parser, args, positional="workflows", flag="workflows_dir")
     if not args.workflows.is_dir():
         print(f"Dereg backstop: not a directory: {args.workflows}", file=sys.stderr)
         return 2

@@ -60,6 +60,8 @@ expression language refuses to give you.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
 from pathlib import Path
@@ -172,8 +174,10 @@ def check_workflow(path: Path) -> list[tuple[str, str]]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--workflows-dir", default=".github/workflows")
+    _cli.add_dir_positional(ap)
     args = ap.parse_args(argv)
 
+    _cli.resolve_dir_positional(ap, args)
     d = Path(args.workflows_dir)
     if not d.is_dir():
         print(f"::warning::{d} is not a directory — nothing to check")

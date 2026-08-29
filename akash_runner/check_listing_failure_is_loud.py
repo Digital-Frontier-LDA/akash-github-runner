@@ -40,6 +40,8 @@ because the two look identical and "fixing" this one would be a regression.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
 from pathlib import Path
@@ -129,8 +131,10 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=Path(".github/workflows"),
     )
+    _cli.add_dir_positional(ap)
     args = ap.parse_args(argv)
 
+    _cli.resolve_dir_positional(ap, args)
     if not args.workflows.is_dir():
         print(f"Listing-failure: not a directory: {args.workflows}", file=sys.stderr)
         return 2

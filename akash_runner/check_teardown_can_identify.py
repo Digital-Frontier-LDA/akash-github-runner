@@ -93,9 +93,11 @@ leaves the teardown's gating to the rule that already owns it.
 from __future__ import annotations
 
 import argparse
+
+import _cli
 import re
 import sys
-from pathlib import Path
+
 from typing import Any
 
 import yaml
@@ -238,8 +240,9 @@ def check_document(document: dict[str, Any]) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("workflow", type=Path, help="a workflow file")
+    _cli.add_file_target(parser)
     args = parser.parse_args()
+    _cli.resolve_target(parser, args, positional="workflow", flag="workflow_file")
     try:
         document = yaml.safe_load(args.workflow.read_text()) or {}
     except (OSError, yaml.YAMLError) as exc:
