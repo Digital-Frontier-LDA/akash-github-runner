@@ -21,8 +21,12 @@ RULE = Path(__file__).resolve().parent / "check_escrow_reaper_is_adopted.py"
 CANONICAL = "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-escrow-reaper.yml"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 
-CREATES = "jobs:\n  p:\n    steps:\n      - run: uv tool run just-akash deploy --sdl x.yml\n"
-ADOPTS = f"jobs:\n  r:\n    uses: {CANONICAL}@{SHA}\n"
+PREFIX = "dfci-infra-"
+CREATES = (
+    "jobs:\n  p:\n    steps:\n"
+    f"      - run: uv tool run just-akash deploy --sdl x.yml   # placement {PREFIX}runner\n"
+)
+ADOPTS = f"jobs:\n  r:\n    uses: {CANONICAL}@{SHA}\n    with:\n      placement-prefix: {PREFIX}\n"
 
 
 def _run(tmp_path: Path, files: dict[str, str]) -> subprocess.CompletedProcess:
@@ -89,3 +93,30 @@ def test_an_empty_workflows_dir_refuses_rather_than_passes(tmp_path):
     d.mkdir(parents=True)
     p = subprocess.run([sys.executable, str(RULE), str(d)], capture_output=True, text=True)
     assert p.returncode == 1
+
+
+# ── adopted is not the same as AIMED ──────────────────────────────────────────────────
+
+def test_a_caller_with_no_placement_prefix_fails(tmp_path):
+    """⛔ Without one the reaper sweeps under the mechanism's own default and matches none of
+    this repo's deployments — 0 closable forever, while the adoption audit reads green."""
+    no_prefix = f"jobs:\n  r:\n    uses: {CANONICAL}@{SHA}\n"
+    p = _run(tmp_path, {"prov.yml": CREATES, "reap.yml": no_prefix})
+    assert p.returncode == 1, "a caller declaring no prefix was accepted as adoption"
+    assert "placement-prefix" in p.stdout
+
+
+def test_a_prefix_this_repo_never_stamps_fails(tmp_path):
+    """The inert-adoption case with a prefix present but wrong: it appears nowhere else in
+    the repo, so the reaper would match nothing."""
+    wrong = f"jobs:\n  r:\n    uses: {CANONICAL}@{SHA}\n    with:\n      placement-prefix: nobody-stamps-this-\n"
+    p = _run(tmp_path, {"prov.yml": CREATES, "reap.yml": wrong})
+    assert p.returncode == 1
+    assert "appears nowhere else" in p.stdout
+
+
+def test_a_prefix_the_repo_DOES_stamp_passes(tmp_path):
+    """Anti-vacuity partner for both of the above: if any prefix were rejected, 'declares a
+    prefix' would be satisfiable only by failing, and the rule would fail correct code."""
+    p = _run(tmp_path, {"prov.yml": CREATES, "reap.yml": ADOPTS})
+    assert p.returncode == 0, p.stdout + p.stderr

@@ -73,6 +73,16 @@ on:
         required: false
         default: false
         type: boolean
+      placement-prefix:
+        description: >-
+          The on-chain provenance marker a deployment must carry to count as THIS repo's.
+          REQUIRED and without a default, deliberately: the mechanism's own default is
+          `just-akash-`, and a consumer that stamps something else (the sibling stamps
+          `dfci-infra-`) would silently get a reaper matching NONE of its deployments —
+          reporting 0 forever while looking adopted. An inert reaper is worse than an absent
+          one, because it manufactures a green signal over an unswept account.
+        required: true
+        type: string
       python-version:
         required: false
         default: "3.13"
@@ -146,12 +156,22 @@ jobs:
           # report. Equality against the literal "true" is the only test that gets all three
           # cases right.
           EXECUTE: ${{ inputs.execute }}
+          PLACEMENT_PREFIX: ${{ inputs.placement-prefix }}
         run: |
           set -euo pipefail
+          # ⛔ REFUSED IF BLANK. `"".startswith(x)` is True for every string, so an empty
+          # prefix turns the ownership conjunct into a tautology and the sweep would claim
+          # every deployment on the account, including other repos'. The mechanism refuses it
+          # too; this is the earlier of the two so the error names the WORKFLOW INPUT the
+          # caller actually controls, rather than a Python argument they never passed.
+          if [ -z "${PLACEMENT_PREFIX// /}" ]; then
+            echo "::error::placement-prefix is empty. It is the ownership predicate; blank matches EVERY deployment on the account, including other repos'."
+            exit 1
+          fi
           if [ "$EXECUTE" = "true" ]; then
-            MODE=(--reap-runners --execute)
+            MODE=(--reap-runners --execute --placement-prefix "$PLACEMENT_PREFIX")
           else
-            MODE=(--reap-runners)
+            MODE=(--reap-runners --placement-prefix "$PLACEMENT_PREFIX")
           fi
           # ⛔ `--reap-runners` IS UNCONDITIONAL, AND WITHOUT IT THIS CANNOT REACH THE
           # POPULATION IT EXISTS FOR. With the flag off, classify() returns
