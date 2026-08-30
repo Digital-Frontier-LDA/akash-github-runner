@@ -78,6 +78,22 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
+    "check_escrow_reaper_is_adopted.py": (
+        "ADVISORY because it FAILS EVERY AKASH-SPENDING CONSUMER TODAY, INCLUDING THIS REPO, "
+        "and that is the finding rather than a defect in the rule. Blast radius MEASURED "
+        "2026-08-30 before wiring, which is what the promotion protocol requires: "
+        "DigitalFrontier-infra -> FAIL (akash-runner.yml, runner-time-to-ready.yml create "
+        "deployments; nothing adopts the reaper), just-akash -> FAIL (provider-canary.yml), "
+        "akash-github-runner -> FAIL (df-akash-gate.yml), df-wiki -> NOT APPLICABLE (creates "
+        "none). Three of three in-scope repos fail. "
+        "⛔ THE RULE IS CORRECT AND THE FLEET IS NOT COMPLIANT YET -- the canonical workflow "
+        "landed in the same change, so no consumer has had a SHA to pin. Promoting to "
+        "ENFORCING before the wiring PRs would red every consumer's conformance run for a "
+        "state they had no opportunity to reach. "
+        "PROMOTE WHEN: all three in-scope repos adopt it at a pinned SHA, which the wiring "
+        "PRs do -- at that point this rule passes everywhere and the exemption's own reason "
+        "stops being true."
+    ),
     "check_provisioning_is_delegated.py": (
         "ADVISORY because it FAILS TWO CURRENT CONSUMERS TODAY, by design. Standard §1 "
         "mandates that runner provisioning live ONLY in just-akash, consumed via `uses:` at "

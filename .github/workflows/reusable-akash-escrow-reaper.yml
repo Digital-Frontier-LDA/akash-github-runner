@@ -1,0 +1,184 @@
+# Reusable AKASH ESCROW reaper — the deployment-closing counterpart to
+# `reusable-stale-runner-reaper.yml`, in one adoptable place.
+#
+# ⛔ TWO LEAKS, ONE LOOP, TWO DIFFERENT OBJECTS. The sibling reaper closes stale GitHub
+# ORG-RUNNER REGISTRATIONS. This one closes stale AKASH DEPLOYMENTS, which is where the
+# escrow actually sits. They interlock — an exhausted PAT 403s the next runner's
+# registration token and strands its lease — but a repo that adopts one is not covered
+# for the other, and conflating them is how the escrow half went unowned.
+#
+# ⛔ WHY THIS EXISTS. Measured 2026-08-30 across the two consumers that spend on Akash:
+#
+#   repo                       escrow reaper            scheduled?   closes on schedule?
+#   Borduas-Holdings/Blazing-Back  cleanup-stale-akash.yml  yes, 0 */6   NO (DRY_RUN forced true)
+#   Digital-Frontier-LDA/just-akash cleanup-stale.yml       yes, 23 0,6,12,18  NO (execute inherits false)
+#
+# Both repos HAVE a reaper. Both are observe-only on schedule. So the finding is NOT
+# "a repo is missing a reaper" — it is that two independently-written reapers converged
+# on the same hands-off posture, and neither closes anything without a human dispatch.
+# Measured the same day: 20 `just-akash-runner` leases sat 14-21h through four scheduled
+# runs that each REPORTED them and closed none. A hand dispatch closed 20/20 and returned
+# 109.11 -> 233.54 ACT, taking the concurrency budget from 6 runs to 14 against ~10 in
+# flight. The CI that was blocked was blocked on escrow those four crons had already found.
+#
+# ⚠ AND THE HANDS-OFF POSTURE IS A SCAR, NOT AN OVERSIGHT. Both repos cite the same
+# incident: a sweeper without an ownership predicate destroyed a 200 GiB research volume
+# four times and killed the provider canary. So this workflow does NOT flip the default to
+# closing. It standardises the MECHANISM and the SAFETY PROTOCOL; `execute` still defaults
+# false and a scheduled caller still reports. What it removes is the divergence, not the
+# protocol.
+#
+# ⛔ WHY THE MECHANISM IS just-akash AND NOT A SCRIPT VENDORED HERE. `just_akash.cleanup_stale`
+# already owns the classifier, and it is the classifier that makes this safe to run at all:
+#
+#     STALE-runner            closable  — services==['runner'] AND group_spec.name carries the prefix
+#     LEAVE-not-ours          spared    — a runner lease WITHOUT the prefix (another project)
+#     LEAVE-real-or-unknown   spared    — services==['app'], tenant workloads
+#     LEAVE-unclassifiable    spared    — services unreadable; absence is not permission
+#
+# Re-implementing that here would give the fleet a SECOND ownership predicate to keep in
+# sync, which is the defect this file exists to remove. agr owns the POLICY; just-akash
+# owns the MECHANISM. Verified 2026-08-30: 20 closed, 0 failed, and `LEAVE-not-ours` spared
+# the unprefixed runner leases on the same account.
+#
+# ⛔ ADOPTION IS THE POINT, AND IT IS THE PART THAT USUALLY FAILS. `reusable-stale-runner-reaper.yml`
+# has been canonical in this repo for a week and BOTH consumers still call something else —
+# just-akash points at df-cicd's copy (unreachable cross-org, reports as "not found") and
+# Blazing-Back calls nothing. A reusable workflow with no callers is not a standard, it is a
+# file. This one ships WITH both callers wired in the same change.
+#
+# ⚠ NO `on: schedule` HERE, DELIBERATELY. `check_reaper_schedule.py` scopes its rule to
+# workflows that are "reaper-shaped AND not workflow_call-invocable", because a
+# `workflow_call` workflow runs when its caller runs and demanding a cron of it is
+# meaningless. The CALLER owns the schedule; this file owns what happens when it fires.
+
+name: Reusable Akash escrow reaper
+
+on:
+  workflow_call:
+    inputs:
+      just-akash-ref:
+        description: >-
+          Git ref of Digital-Frontier-LDA/just-akash to install. REQUIRED and deliberately
+          without a default: `uv tool install git+...@main` resolves at INSTALL time, so a
+          floating ref silently changes the closing logic under a caller that changed
+          nothing (Blazing-Back akash-runner.yml:135 documents the same trap). Pin a SHA.
+        required: true
+        type: string
+      execute:
+        description: >-
+          Actually close (true) or report only (false). Defaults to REPORT. A scheduled
+          caller supplies no inputs and therefore inherits false, which is the protocol
+          both consumers already run and this workflow does not change.
+        required: false
+        default: false
+        type: boolean
+      python-version:
+        required: false
+        default: "3.13"
+        type: string
+    secrets:
+      AKASH_API_KEY:
+        description: Console API key for the account whose deployments are to be swept.
+        required: true
+    outputs:
+      closed:
+        description: Number of deployments closed (0 on a report-only run).
+        value: ${{ jobs.reap.outputs.closed }}
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    # The job NAME states the mode, so the run list distinguishes a report from a close
+    # without opening the log. Both consumers already do this and it is worth keeping.
+    name: ${{ inputs.execute && 'Close stale deployments' || 'Dry-run stale report' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      closed: ${{ steps.sweep.outputs.closed }}
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install just-akash at the pinned ref
+        env:
+          REF: ${{ inputs.just-akash-ref }}
+        run: |
+          set -euo pipefail
+          # ⚠ REF THROUGH env, NEVER INTERPOLATED INTO THE RUN BODY. An inputs expression
+          # written directly into a shell line is the injection shape; the value being typed
+          # today does not make the pattern safe tomorrow, and a scanner cannot tell the two
+          # call sites apart. (Written as prose deliberately: actionlint rejects an undefined
+          # workflow expression even inside a comment, so the example cannot be spelled out.)
+          #
+          # ⛔ A 40-HEX SHA, NOT MERELY SAFE CHARACTERS. The first version accepted anything
+          # matching [A-Za-z0-9._/-], which admits `main` and every tag — CWE-829: a mutable
+          # ref resolves at INSTALL time, so the closing logic changes under a caller that
+          # changed nothing. That is the same pin discipline `check_escrow_reaper_is_adopted`
+          # demands of CONSUMERS, and this workflow was not holding itself to it.
+          case "$REF" in
+            *[!0-9a-f]*|"")
+              echo "::error::just-akash-ref must be a 40-character lowercase commit SHA; got a non-hex ref. A branch or tag resolves at install time and lets the closing logic drift."
+              exit 1 ;;
+          esac
+          if [ "${#REF}" -ne 40 ]; then
+            echo "::error::just-akash-ref must be exactly 40 hex characters; got ${#REF}."
+            exit 1
+          fi
+          uv tool install "git+https://github.com/Digital-Frontier-LDA/just-akash@${REF}"
+
+      - name: Sweep
+        id: sweep
+        env:
+          AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+          # ⛔ THROUGH env AND COMPARED FOR EQUALITY BELOW. Two measured traps meet here and
+          # both produce a LIVE CLOSE from something that reads like a dry run:
+          #   * `DRY_RUN=1` parses as false when the test is `== "true"` (Blazing-Back #1581)
+          #   * `${EXECUTE:+--execute}` / `[ -n "$EXECUTE" ]` both FIRE on the string "false",
+          #     which a dry-run dispatch supplies verbatim.
+          # A scheduled caller supplies NOTHING, so EXECUTE is empty — which must also mean
+          # report. Equality against the literal "true" is the only test that gets all three
+          # cases right.
+          EXECUTE: ${{ inputs.execute }}
+        run: |
+          set -euo pipefail
+          if [ "$EXECUTE" = "true" ]; then
+            MODE=(--reap-runners --execute)
+          else
+            MODE=(--reap-runners)
+          fi
+          # ⛔ `--reap-runners` IS UNCONDITIONAL, AND WITHOUT IT THIS CANNOT REACH THE
+          # POPULATION IT EXISTS FOR. With the flag off, classify() returns
+          # LEAVE-real-or-unknown for EVERY services==['runner'] deployment, so the runner
+          # leases are invisible regardless of --execute. MEASURED on just-akash's 2026-08-25
+          # 12:35Z run: 30 active, 22 of them runner leases holding 110 ACT, verdict
+          # "stale (closable): 0". Promoting THAT run to --execute would have closed NOTHING.
+          # Scheduling alone would have looked like a fix and reaped nothing.
+          set +e
+          uv tool run --from just-akash python -m just_akash.cleanup_stale "${MODE[@]}" | tee /tmp/sweep.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          # ⚠ ${PIPESTATUS[0]} AND `pipefail` — TWO MECHANISMS, AND THE COMMENT THAT USED TO
+          # SIT HERE OVERSTATED ONE OF THEM. It claimed "`$?` after a pipe is tee's status";
+          # that is true of a BARE pipeline, and FALSE here, because `set -o pipefail` above
+          # already makes `$?` carry the leftmost failure. Measured: mutating this line to
+          # `rc=$?` left all 17 tests green, which is exactly what a redundant guard looks
+          # like. It is kept as defence-in-depth for the case that actually bites — someone
+          # dropping `pipefail` from the `set` line, after which `$?` silently becomes tee's
+          # 0 and an unswept account reports as a clean one. `test_pipefail_is_set` pins the
+          # other half, so removing EITHER mechanism now fails.
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::cleanup_stale exited $rc — treating as an UNSWEPT account, not a clean one"
+            exit "$rc"
+          fi
+          closed=$(grep -oE '^closed=[0-9]+' /tmp/sweep.log | tail -1 | cut -d= -f2 || true)
+          echo "closed=${closed:-0}" >> "$GITHUB_OUTPUT"
+          # The classifier prints its own verdict table; surface the summary line so a caller
+          # reading the run list sees the number without opening the log.
+          grep -E '^(stale \(closable\)|closed=)' /tmp/sweep.log | tail -2 >> "$GITHUB_STEP_SUMMARY" || true
