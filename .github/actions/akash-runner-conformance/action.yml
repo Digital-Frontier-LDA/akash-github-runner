@@ -36,9 +36,18 @@ inputs:
       action invoked it with no kind at all, so every caller got `auto`, and `auto` errs
       toward consumer mode. A lease-spender therefore failed with "no canonical
       just-akash runner-pool reusable job found" — a PERMANENT RED naming a rule the
-      repo was never in scope for. Measured on Blazing-Back (#1628) and df-cicd: both
-      are lease-spenders, both had to choose between that red and omitting `workflow`
-      entirely, which silently drops the workflow-scoped rules that DO apply to them.
+      repo was never in scope for. Measured on Blazing-Back (#1628): it is a
+      lease-spender, and had to choose between that red and omitting `workflow`
+      entirely, which silently drops the workflow-scoped rules that DO apply to it.
+
+      ⚠ THIS PARAGRAPH USED TO NAME df-cicd AS THE SECOND LEASE-SPENDER, and
+      contradicted line ~234 of this same file ("df-cicd / agr / df-wiki
+      NOT-JUDGEABLE (exit 3) — they provision nothing"). Re-measured 2026-08-30
+      against df-cicd@origin/main: ZERO uncommented lease-provisioning calls in any
+      workflow — `df-akash-gate.yml`'s `just-akash deploy` is commented out, and its
+      own runner-conformance.yml deliberately sets `workflow: ""`. df-cicd is the
+      FOURTH shape (no runner workflow at all), not a lease-spender. The live
+      lease-spenders measured today are `blazing` and `Blazing-Back`.
       check_teardown_can_identify PASSES non-vacuously on Blazing-Back — 9 run-steps
       examined — and was being thrown away to dodge an inapplicable finding.
 
