@@ -197,13 +197,13 @@ runs:
         # warning must expand the arrays instead of naming anything by hand. Add rule
         # eleven without touching these and that test fails.
         DIR_SCOPED_ENFORCING=(
+          check_escrow_reaper_is_adopted.py
           check_disable_auto_update_absent.py
           check_dereg_backstop.py
           check_backstop_covers_producers.py
           check_context_properties_exist.py
         )
         DIR_SCOPED_ADVISORY=(
-          check_escrow_reaper_is_adopted.py
           check_provisioning_is_delegated.py
           check_reaper_schedule.py
           check_funding_gate_is_not_re_derived.py
@@ -253,7 +253,7 @@ runs:
           # rule: the canonical workflow landed in the same change, so no consumer has had a
           # SHA to pin yet. Enforcing now would red every consumer for a state they had no
           # opportunity to reach. PROMOTE WHEN all three adopt it at a pinned SHA.
-          advisory check_escrow_reaper_is_adopted.py "$WORKFLOWS_DIR"
+          python3 "$ROOT/check_escrow_reaper_is_adopted.py" "$WORKFLOWS_DIR" || rc=1
           # ⛔ FUNDING IS A SHARED DECISION, NOT A PER-REPO ONE. akash-lease-core v0.8.0
           # answers it once — quantised, naming WHICH quantity it read, three outcomes,
           # max(SLOT) never the sum. This rule fails a consumer that re-derives it from
