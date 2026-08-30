@@ -53,6 +53,25 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
 
 
+def _executable(text: str) -> str:
+    """The workflow with COMMENT LINES STRIPPED.
+
+    ⛔ A COMMENT IS NOT EVIDENCE, IN EITHER DIRECTION. Scanning raw YAML let a comment
+    decide the verdict twice over: `# uses: <canonical>@<sha>` in a note would have counted
+    as an ADOPTER and passed a repo with no caller at all, and a `just-akash deploy` quoted
+    in a comment would have pulled a repo that creates nothing INTO scope.
+
+    ⚠ This is the third instance of the same class found in one day — a rule keyed to a
+    quotable string retargets onto the prose describing it, and a guard whose own docstring
+    quotes its pattern can never fail. Stripping is line-based on purpose: a YAML parse would
+    also discard the `uses:` lines this rule reads when a workflow fails to parse, turning an
+    unparseable file into a silent pass.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
 def audit(d: Path) -> tuple[list[str], bool]:
     """Return (findings, in_scope) for one `.github/workflows` directory."""
     files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml"))
@@ -61,7 +80,7 @@ def audit(d: Path) -> tuple[list[str], bool]:
         # shape that makes a rule look adopted everywhere it was never actually run.
         return ([f"no workflow files under {d} — cannot judge, refusing to pass"], True)
 
-    texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in files}
+    texts = {p: _executable(p.read_text(encoding="utf-8", errors="replace")) for p in files}
     creators = [p.name for p, t in texts.items() if CREATES.search(t)]
     if not creators:
         return ([], False)

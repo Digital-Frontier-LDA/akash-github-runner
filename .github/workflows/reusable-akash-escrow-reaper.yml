@@ -111,14 +111,26 @@ jobs:
           REF: ${{ inputs.just-akash-ref }}
         run: |
           set -euo pipefail
-          # ⚠ REF THROUGH env, NEVER INTERPOLATED INTO THE RUN BODY. `${{ inputs.x }}` inside
-          # a shell line is the injection shape; the value being typed today does not make
-          # the pattern safe tomorrow, and a scanner cannot tell the two call sites apart.
+          # ⚠ REF THROUGH env, NEVER INTERPOLATED INTO THE RUN BODY. An inputs expression
+          # written directly into a shell line is the injection shape; the value being typed
+          # today does not make the pattern safe tomorrow, and a scanner cannot tell the two
+          # call sites apart. (Written as prose deliberately: actionlint rejects an undefined
+          # workflow expression even inside a comment, so the example cannot be spelled out.)
+          #
+          # ⛔ A 40-HEX SHA, NOT MERELY SAFE CHARACTERS. The first version accepted anything
+          # matching [A-Za-z0-9._/-], which admits `main` and every tag — CWE-829: a mutable
+          # ref resolves at INSTALL time, so the closing logic changes under a caller that
+          # changed nothing. That is the same pin discipline `check_escrow_reaper_is_adopted`
+          # demands of CONSUMERS, and this workflow was not holding itself to it.
           case "$REF" in
-            ""|*[!A-Za-z0-9._/-]*)
-              echo "::error::just-akash-ref is empty or contains characters outside [A-Za-z0-9._/-]: refusing"
+            *[!0-9a-f]*|"")
+              echo "::error::just-akash-ref must be a 40-character lowercase commit SHA; got a non-hex ref. A branch or tag resolves at install time and lets the closing logic drift."
               exit 1 ;;
           esac
+          if [ "${#REF}" -ne 40 ]; then
+            echo "::error::just-akash-ref must be exactly 40 hex characters; got ${#REF}."
+            exit 1
+          fi
           uv tool install "git+https://github.com/Digital-Frontier-LDA/just-akash@${REF}"
 
       - name: Sweep
