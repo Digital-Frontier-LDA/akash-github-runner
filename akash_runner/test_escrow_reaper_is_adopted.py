@@ -120,3 +120,38 @@ def test_a_prefix_the_repo_DOES_stamp_passes(tmp_path):
     prefix' would be satisfiable only by failing, and the rule would fail correct code."""
     p = _run(tmp_path, {"prov.yml": CREATES, "reap.yml": ADOPTS})
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ── the repo that SHIPS the mechanism has a different obligation, not a lighter one ────
+
+INVOKES = "jobs:\n  r:\n    steps:\n      - run: uv run python -m just_akash.cleanup_stale --reap-runners\n"
+
+
+def _with_mechanism(tmp_path: Path, files: dict[str, str]) -> subprocess.CompletedProcess:
+    (tmp_path / "just_akash").mkdir(parents=True)
+    (tmp_path / "just_akash" / "cleanup_stale.py").write_text("# the mechanism\n")
+    return _run(tmp_path, files)
+
+
+def test_the_mechanism_repo_passes_by_invoking_directly(tmp_path):
+    """Requiring it to `uses:` the reusable would make it install ITSELF at a released SHA
+    and sweep with that instead of HEAD — so a defect on HEAD would go unexercised by the one
+    repo whose CI could catch it before consumers pin it."""
+    p = _with_mechanism(tmp_path, {"prov.yml": CREATES, "reap.yml": INVOKES})
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "SHIPS the mechanism" in p.stdout
+
+
+def test_the_mechanism_repo_still_has_to_RUN_it(tmp_path):
+    """⛔ THE ANTI-HOLE. Without this, "ships the mechanism" would be a free pass and the repo
+    most able to reap would be the only one not required to."""
+    p = _with_mechanism(tmp_path, {"prov.yml": CREATES})
+    assert p.returncode == 1, "shipping the mechanism without invoking it was accepted"
+    assert "no workflow invokes it" in p.stdout
+
+
+def test_a_consumer_gets_no_such_exemption(tmp_path):
+    """Anti-vacuity in the other direction: a repo that merely MENTIONS the module, without
+    shipping it, is still a consumer and must adopt."""
+    p = _run(tmp_path, {"prov.yml": CREATES, "reap.yml": INVOKES})
+    assert p.returncode == 1, "a consumer invoking the module directly was let off adoption"
