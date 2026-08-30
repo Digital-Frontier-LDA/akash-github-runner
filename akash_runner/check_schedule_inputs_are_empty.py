@@ -51,9 +51,13 @@ from typing import Any
 import yaml
 
 # `github.event.inputs.X` and the modern `inputs.X`. Both are empty under `schedule`.
-_INPUT_REF = re.compile(r"\$\{\{[^}]*?\b(?:github\.event\.inputs|inputs)\.([A-Za-z0-9_-]+)[^}]*\}\}")
+_INPUT_REF = re.compile(
+    r"\$\{\{[^}]*?\b(?:github\.event\.inputs|inputs)\.([A-Za-z0-9_-]+)[^}]*\}\}"
+)
 # A discriminator: the expression asks WHICH event fired before trusting the input.
-_EVENT_NAME_GUARD = re.compile(r"github\.event_name\s*==\s*'(?:schedule|workflow_dispatch)'")
+_EVENT_NAME_GUARD = re.compile(
+    r"github\.event_name\s*==\s*'(?:schedule|workflow_dispatch)'"
+)
 
 # Exemptions must name the workflow AND why an empty input is harmless there. An
 # exemption without a reason is a permanent silence; this file makes the reason readable.
@@ -117,7 +121,9 @@ def main(argv: list[str] | None = None) -> int:
 
     files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml"))
     scheduled = [p for p in files if "schedule" in _triggers(_load(p))]
-    print(f"Scanned {len(files)} workflow(s); {len(scheduled)} carry an `on: schedule` trigger.")
+    print(
+        f"Scanned {len(files)} workflow(s); {len(scheduled)} carry an `on: schedule` trigger."
+    )
 
     bad = 0
     for p in files:
@@ -128,9 +134,26 @@ def main(argv: list[str] | None = None) -> int:
                 f"falls through to its default on every cron firing: {line}"
             )
     if bad:
+        # ⛔ HALF THIS MESSAGE USED TO BE UNREACHABLE FROM WHERE IT IS READ. It said "add
+        # the workflow to SCHEDULE_INPUT_EXEMPT with a reason" — but that dict lives HERE,
+        # in this rule file, in akash-github-runner. A consumer repo cannot edit it. The
+        # reader followed the advice, found no such symbol in their own tree, and was left
+        # with a remedy that does not exist on their side of the boundary.
+        #
+        # ⚠ And the expression half was wrong in the direction that matters. For a
+        # `type: boolean` input an unchecked box is the value `false`, so
+        # `(inputs.dry-run || 'true')` evaluates `false || 'true'` -> 'true': an operator's
+        # explicit "no, go live" silently becomes a dry run. The chain below works because
+        # 'false' is a NON-EMPTY, therefore truthy, string to `||`.
         print(
-            "::error::Discriminate the path — `github.event_name == 'schedule' && <safe> "
-            "|| <input expr>` — or add the workflow to SCHEDULE_INPUT_EXEMPT with a reason."
+            "::error::Discriminate the path. For a boolean input:\n"
+            "  ${{ github.event_name == 'schedule' && 'false' "
+            "|| (inputs.dry-run && 'true' || 'false') }}\n"
+            '  ⚠ the consuming script MUST compare by equality — [ "$DRY_RUN" = "true" ]. '
+            'Both [ -n "$VAR" ] and ${VAR:+--flag} FIRE on the string "false".\n'
+            "  An exemption is possible but NOT from your repo: SCHEDULE_INPUT_EXEMPT lives "
+            "in akash-github-runner/akash_runner/check_schedule_inputs_are_empty.py. "
+            "Open a PR there naming the workflow and why its default is safe."
         )
         return 1
     print("OK: no scheduled workflow trusts an input the schedule cannot supply.")
