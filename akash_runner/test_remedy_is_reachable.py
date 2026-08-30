@@ -99,3 +99,72 @@ def test_the_control_can_actually_fire() -> None:
     assert not re.findall(r"inputs\.[A-Za-z0-9_-]+\s*\|\|\s*'(?:true|false)'", safe), (
         "the matcher fires on the CORRECT form — it would block the fix it is asking for"
     )
+
+
+# ── agr#54: the rule read its own subject's COMMENTS as evidence ────────────────────────
+
+
+def _write(tmp_path, body: str):
+    p = tmp_path / "reaper.yml"
+    p.write_text(body)
+    return p
+
+
+_SCHEDULED = """on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        type: boolean
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+        env:
+"""
+
+
+def test_a_comment_quoting_the_defect_is_not_the_defect(tmp_path) -> None:
+    """The documented FIX must not be reported as the bug it documents."""
+    from check_schedule_inputs_are_empty import check_workflow
+
+    p = _write(
+        tmp_path,
+        _SCHEDULED
+        + "          # ⛔ the previous `${{ inputs.dry-run || 'false' }}` selected the\n"
+        "          # DESTRUCTIVE path on every cron firing.\n"
+        "          DRY_RUN: ${{ github.event_name == 'schedule' && 'false'"
+        " || (inputs.dry-run && 'true' || 'false') }}\n",
+    )
+    assert check_workflow(p) == [], (
+        "a comment quoting the old expression was reported as the finding — the rule's "
+        "verdict depends on how the fix is described, and the workaround is to not explain it"
+    )
+
+
+def test_the_real_defect_is_still_caught(tmp_path) -> None:
+    """⛔ NON-VACUITY. Stripping comments must not blind the rule to a live expression."""
+    from check_schedule_inputs_are_empty import check_workflow
+
+    p = _write(
+        tmp_path, _SCHEDULED + "          DRY_RUN: ${{ inputs.dry-run || 'false' }}\n"
+    )
+    assert check_workflow(p), (
+        "comment stripping silenced a REAL fall-through expression — the fix is worse "
+        "than the bug it replaces"
+    )
+
+
+def test_an_expression_sharing_a_line_with_a_trailing_hash_survives(tmp_path) -> None:
+    """Only WHOLE-LINE comments are dropped; a trailing `#` must not eat the line."""
+    from check_schedule_inputs_are_empty import check_workflow
+
+    p = _write(
+        tmp_path,
+        _SCHEDULED + "          DRY_RUN: ${{ inputs.dry-run || 'false' }} # legacy\n",
+    )
+    assert check_workflow(p), (
+        "a trailing comment removed the whole line, hiding a real defect"
+    )

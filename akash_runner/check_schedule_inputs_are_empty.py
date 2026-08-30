@@ -98,13 +98,38 @@ def offending_expressions(text: str) -> list[str]:
     return out
 
 
+def _executable(text: str) -> str:
+    """The workflow with WHOLE-LINE YAML COMMENTS REMOVED.
+
+    ⛔ A COMMENT IS NOT EVIDENCE. This rule scans raw workflow text, so a comment that
+    QUOTES the defective expression was reported as the defect (agr#54, reproduced while
+    fixing blazing#786). The emitted finding even carried the leading `#` and a sentence
+    fragment:
+
+        ::error::... falls through to its default on every cron firing:
+                 # `${{ inputs.dry-run || 'false' }}` selected the DESTRUCTIVE path by
+
+    ⚠ THE INCENTIVE WAS BACKWARDS. Rewording the comment made it pass, so the verdict
+    depended on how the fix was DESCRIBED, and the workaround was to not explain it — in a
+    codebase whose comments carry the measured incidents. `check_escrow_reaper_is_adopted`
+    grew the same helper for the same reason; this one had no equivalent.
+
+    Only lines whose FIRST non-whitespace character is `#` are dropped. A trailing `#` can
+    sit inside a quoted string, and guessing at that would blind the rule to a real
+    expression on the same line.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
 def check_workflow(path: Path) -> list[str]:
     wf = _load(path)
     if "schedule" not in _triggers(wf):
         return []  # cannot exhibit the defect
     if path.name in SCHEDULE_INPUT_EXEMPT:
         return []
-    return offending_expressions(path.read_text())
+    return offending_expressions(_executable(path.read_text()))
 
 
 def main(argv: list[str] | None = None) -> int:
