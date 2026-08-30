@@ -30,6 +30,13 @@ RULES_DIR = ROOT / "akash_runner"
 
 # Rules whose failure FAILS the consumer's build.
 ENFORCING = {
+    # ⭐ PROMOTED 2026-08-30. Its advisory period did exactly what an advisory period is for:
+    # the rule shipped with the canonical workflow, no consumer had a SHA to pin, and it
+    # correctly reported 2 of 2 in-scope repos failing. Both now satisfy it —
+    # Blazing-Back adopts at a pinned SHA (#1732, merged), just-akash SHIPS the mechanism and
+    # invokes it directly, and agr/df-wiki create no deployments so they are NOT APPLICABLE.
+    # The exemption's own stated reason has stopped being true, which was its PROMOTE WHEN.
+    "check_escrow_reaper_is_adopted.py",
     # ⛔ ENFORCING FROM THE START, DELIBERATELY — the usual advisory-then-promote path is
     # skipped here because the blast radius was MEASURED BEFORE wiring, which is what the
     # promotion sweep exists to establish:
@@ -78,27 +85,6 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
-    "check_escrow_reaper_is_adopted.py": (
-        "ADVISORY because it FAILS BOTH IN-SCOPE CONSUMERS TODAY, and that is the finding "
-        "rather than a defect in the rule. Blast radius RE-MEASURED 2026-08-30 after the "
-        "comment-stripping fix, which CHANGED THE POPULATION: "
-        "DigitalFrontier-infra -> FAIL (akash-runner.yml, runner-time-to-ready.yml), "
-        "just-akash -> FAIL (provider-canary.yml), "
-        "akash-github-runner -> NOT APPLICABLE, "
-        "df-wiki -> NOT APPLICABLE. "
-        "⚠ agr WAS COUNTED AS FAILING IN THE FIRST MEASUREMENT AND THAT WAS WRONG: the "
-        "only `just-akash deploy` in this repo is df-akash-gate.yml:75, a COMMENTED-OUT "
-        "sketch of a future design. The rule read its own comments as evidence; fixing that "
-        "moved this repo out of scope, so the honest count is 2 of 2, not 3 of 3. "
-        "⛔ The rule is correct and the fleet is not compliant yet -- the canonical workflow "
-        "landed with it, so no consumer has had a SHA to pin, and adoption additionally "
-        "needs the mechanism's placement-prefix parameter (just-akash #230) or it would be "
-        "INERT: a consumer stamping `dfci-infra-` swept under the default `just-akash-` "
-        "matches nothing and reports 0 forever while this rule reads green. "
-        "PROMOTE WHEN: both in-scope repos adopt it at a pinned SHA with a placement-prefix "
-        "this rule can see them stamp -- at that point it passes everywhere and this "
-        "exemption's own reason stops being true."
-    ),
     "check_provisioning_is_delegated.py": (
         "ADVISORY because it FAILS TWO CURRENT CONSUMERS TODAY, by design. Standard §1 "
         "mandates that runner provisioning live ONLY in just-akash, consumed via `uses:` at "
