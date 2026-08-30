@@ -52,6 +52,15 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 # The prefix a caller declares it will sweep. `with:` block, so a plain key scan suffices.
 PREFIX_INPUT = re.compile(r"^\s*placement-prefix:\s*[\"']?([^\"'\s#]+)", re.M)
 
+# The module that IS the mechanism. A repo shipping it does not consume the reusable
+# workflow — it is what the reusable workflow installs.
+MECHANISM = Path("just_akash") / "cleanup_stale.py"
+
+# How the mechanism repo must invoke it instead. This is an OBLIGATION, not a hole: without
+# it "ships the mechanism" would be a free pass, and the repo most able to reap would be the
+# one least required to.
+MECHANISM_INVOCATION = re.compile(r"just_akash\.cleanup_stale")
+
 # Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
 # `balance`, `list` and `tag` read or annotate and leak nothing.
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
@@ -116,6 +125,28 @@ def audit(d: Path) -> tuple[list[str], bool]:
     creators = [p.name for p, t in texts.items() if CREATES.search(t)]
     if not creators:
         return ([], False)
+
+    # ⛔ THE REPO THAT SHIPS THE MECHANISM RUNS IT FROM THE CHECKOUT, NOT VIA A PIN.
+    # Requiring it to `uses:` the reusable would make it install ITSELF at a released SHA and
+    # sweep with that instead of with HEAD — so a defect on HEAD would go unexercised by the
+    # one repo whose CI could catch it before consumers pin it.
+    #
+    # ⚠ THIS IS A DIFFERENT OBLIGATION, NOT AN EXEMPTION. Without the invocation check,
+    # "ships the mechanism" would be a free pass, and the repo most able to reap would be the
+    # only one not required to.
+    if (d.resolve().parent.parent / MECHANISM).is_file():
+        invokers = [p.name for p, t in texts.items() if MECHANISM_INVOCATION.search(t)]
+        if not invokers:
+            return (
+                [
+                    "ships the escrow-reaper mechanism (just_akash/cleanup_stale.py) but no "
+                    "workflow invokes it. The mechanism repo runs it from the checkout rather "
+                    "than adopting the reusable — but it must still RUN it, or the "
+                    "implementation the whole fleet pins is the one nothing exercises."
+                ],
+                True,
+            )
+        return ([], True)
 
     findings: list[str] = []
     adopters: list[str] = []
@@ -191,7 +222,10 @@ def main(argv: list[str] | None = None) -> int:
         for f in findings:
             print(f"::error::{label}: {f}")
         return 1
-    print(f"OK: {label} adopts {CANONICAL} at a pinned SHA.")
+    if (d.resolve().parent.parent / MECHANISM).is_file():
+        print(f"OK: {label} SHIPS the mechanism and invokes it directly — adoption via the reusable is not required.")
+    else:
+        print(f"OK: {label} adopts {CANONICAL} at a pinned SHA.")
     return 0
 
 
