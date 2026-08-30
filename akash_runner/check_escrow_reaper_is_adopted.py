@@ -32,8 +32,10 @@ per-run teardowns.
 
 from __future__ import annotations
 
+import argparse
+
+import _cli
 import re
-import sys
 from pathlib import Path
 
 CANONICAL = "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-escrow-reaper.yml"
@@ -51,16 +53,13 @@ SHA40 = re.compile(r"^[0-9a-f]{40}$")
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
 
 
-def workflows(root: Path) -> list[Path]:
-    d = root / ".github" / "workflows"
-    return sorted(p for p in d.glob("*.yml")) if d.is_dir() else []
-
-
-def audit(root: Path) -> tuple[list[str], bool]:
-    """Return (findings, in_scope)."""
-    files = workflows(root)
+def audit(d: Path) -> tuple[list[str], bool]:
+    """Return (findings, in_scope) for one `.github/workflows` directory."""
+    files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml"))
     if not files:
-        return ([f"NO WORKFLOWS FOUND under {root}/.github/workflows — cannot judge, refusing to pass"], True)
+        # ⚠ An empty directory is NOT a clean repo. Judging nothing and returning 0 is the
+        # shape that makes a rule look adopted everywhere it was never actually run.
+        return ([f"no workflow files under {d} — cannot judge, refusing to pass"], True)
 
     texts = {p: p.read_text(encoding="utf-8", errors="replace") for p in files}
     creators = [p.name for p, t in texts.items() if CREATES.search(t)]
@@ -68,40 +67,51 @@ def audit(root: Path) -> tuple[list[str], bool]:
         return ([], False)
 
     findings: list[str] = []
-    adopters = []
+    adopters: list[str] = []
     for p, t in texts.items():
         for m in ADOPTION.finditer(t):
-            ref = m.group("ref")
             adopters.append(p.name)
+            ref = m.group("ref")
             if not SHA40.match(ref):
                 findings.append(
-                    f"{p.name}: adopts the canonical escrow reaper but pins `@{ref}`, not a 40-hex SHA. "
-                    "A branch/tag ref resolves at run time, so the closing logic can change under a "
-                    "consumer that changed nothing."
+                    f"{p.name}: adopts the canonical escrow reaper but pins `@{ref}`, not a "
+                    "40-hex SHA. A branch/tag ref resolves at run time, so the closing logic "
+                    "can change under a consumer that changed nothing."
                 )
     if not adopters:
         findings.append(
             f"creates Akash deployments ({', '.join(sorted(creators))}) but no workflow calls "
-            f"`{CANONICAL}`. Having a repo-local reaper does NOT satisfy this: both consumers had "
-            "one on a 6h cron and neither closed anything."
+            f"`{CANONICAL}`. A repo-local reaper does NOT satisfy this: both consumers had one "
+            "on a 6h cron and neither closed anything."
         )
     return (findings, True)
 
 
-def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
-    findings, in_scope = audit(root)
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--workflows-dir", default=".github/workflows")
+    _cli.add_dir_positional(ap)
+    args = ap.parse_args(argv)
+
+    _cli.resolve_dir_positional(ap, args)
+    d = Path(args.workflows_dir)
+    if not d.is_dir():
+        print(f"::warning::{d} is not a directory — nothing to check")
+        return 0
+
+    findings, in_scope = audit(d)
+    label = d.resolve().parent.parent.name
     if not in_scope:
         # ⚠ NOT-APPLICABLE IS PRINTED, NEVER SILENT. A rule that skips quietly is
-        # indistinguishable from a rule that passed, and this repo has already shipped one
-        # checker that reported NOT APPLICABLE on the very repo it was written for.
-        print(f"NOT APPLICABLE: {root.name} creates no Akash deployments — nothing to leak.")
+        # indistinguishable from one that passed, and this repo has already shipped a checker
+        # that reported NOT APPLICABLE on the very repo it was written for.
+        print(f"NOT APPLICABLE: {label} creates no Akash deployments — nothing to leak.")
         return 0
     if findings:
         for f in findings:
-            print(f"::error::{root.name}: {f}")
+            print(f"::error::{label}: {f}")
         return 1
-    print(f"OK: {root.name} adopts {CANONICAL} at a pinned SHA.")
+    print(f"OK: {label} adopts {CANONICAL} at a pinned SHA.")
     return 0
 
 

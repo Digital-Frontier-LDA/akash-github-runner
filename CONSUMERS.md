@@ -22,6 +22,7 @@ better than one that implies adoption it does not have.
 |---|---|---|---|
 | `reusable-akash-runner-conformance.yml` | `Digital-Frontier-LDA/just-akash` → `.github/workflows/runner-conformance.yml` | `NEVER-GREEN` | 8 runs, 8 failures, all `jobs=0`. Root cause measured: a **public** repo cannot call a reusable from a **private/internal** one. This repo exists to remove that blocker. See "Why this repo exists" in the README. |
 
+| `reusable-akash-escrow-reaper.yml` | — | `NONE` | Landed with its adoption checker (`check_escrow_reaper_is_adopted.py`, ADVISORY). No consumer can pin it until this change merges and yields a SHA — `NONE` is the honest state for exactly one hop, and the checker is what makes it observable if it stays that way. The sibling row below has read `NONE` for a week, which is the reason the checker exists. |
 | `reusable-stale-runner-reaper.yml` | — | `NONE` | `workflow_call`-only. No consumer calls it from this repo yet; it moved here with the conformance reusable because it is the same domain. A row of `NONE` is the honest state, not a placeholder. |
 
 ## Why the status above is not a defect in this code

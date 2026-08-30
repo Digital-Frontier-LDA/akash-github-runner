@@ -203,6 +203,7 @@ runs:
           check_context_properties_exist.py
         )
         DIR_SCOPED_ADVISORY=(
+          check_escrow_reaper_is_adopted.py
           check_provisioning_is_delegated.py
           check_reaper_schedule.py
           check_funding_gate_is_not_re_derived.py
@@ -236,6 +237,19 @@ runs:
           # "Goes green on blazing" alone is UNREACHABLE while blazing pins a SHA predating
           # the rule — that exact unreachable phrasing has been written here twice.
           advisory check_provisioning_is_delegated.py "$WORKFLOWS_DIR"
+          # ⚠ ADVISORY ON ARRIVAL, AND IT FAILS EVERY IN-SCOPE REPO INCLUDING THIS ONE.
+          # Blast radius MEASURED 2026-08-30 BEFORE wiring, which is what the promotion
+          # protocol requires:
+          #   DigitalFrontier-infra  FAIL  akash-runner.yml, runner-time-to-ready.yml create
+          #                                deployments; nothing adopts the reaper
+          #   just-akash             FAIL  provider-canary.yml
+          #   akash-github-runner    FAIL  df-akash-gate.yml  (this repo is in its own scope)
+          #   df-wiki                NOT APPLICABLE — creates no deployments
+          # 3 of 3 in-scope repos fail, and that is the FINDING rather than a defect in the
+          # rule: the canonical workflow landed in the same change, so no consumer has had a
+          # SHA to pin yet. Enforcing now would red every consumer for a state they had no
+          # opportunity to reach. PROMOTE WHEN all three adopt it at a pinned SHA.
+          advisory check_escrow_reaper_is_adopted.py "$WORKFLOWS_DIR"
           # ⛔ FUNDING IS A SHARED DECISION, NOT A PER-REPO ONE. akash-lease-core v0.8.0
           # answers it once — quantised, naming WHICH quantity it read, three outcomes,
           # max(SLOT) never the sum. This rule fails a consumer that re-derives it from
