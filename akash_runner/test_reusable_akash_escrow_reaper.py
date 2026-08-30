@@ -52,7 +52,14 @@ def _sweep_executable() -> str:
     )
 
 
-def _run(tmp_path: Path, *, execute: str, sweep_rc: int = 0, closed_line: str = "closed=20 failed=0"):
+def _run(
+    tmp_path: Path,
+    *,
+    execute: str,
+    sweep_rc: int = 0,
+    closed_line: str = "closed=20 failed=0",
+    prefix: str = "just-akash-",
+):
     """Execute the real step script with a fake `uv` that records its argv."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -69,6 +76,7 @@ def _run(tmp_path: Path, *, execute: str, sweep_rc: int = 0, closed_line: str = 
     env = {
         "PATH": f"{bindir}:/usr/bin:/bin",
         "EXECUTE": execute,
+        "PLACEMENT_PREFIX": prefix,
         "AKASH_API_KEY": "stub",
         "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.txt"),
@@ -179,3 +187,42 @@ def test_pipefail_is_set_in_the_sweep():
     script = _sweep_executable()
     assert "pipefail" in script, "pipefail dropped — `$?` after the pipe becomes tee's 0"
     assert "PIPESTATUS[0]" in script, "PIPESTATUS dropped — the rc guard now rests on pipefail alone"
+
+
+# ── the ownership prefix must reach the mechanism, and blank must be refused ──────────
+
+@pytest.mark.parametrize("execute", ["true", "false", ""])
+def test_the_placement_prefix_is_passed_through(tmp_path, execute):
+    """⛔ If it does not reach the mechanism, the sweep runs under the mechanism's OWN
+    default (`just-akash-`) and a consumer stamping something else matches NOTHING — 0
+    closable forever, while an adoption audit reads green. An inert reaper is worse than an
+    absent one."""
+    _, argv, _ = _run(tmp_path, execute=execute, prefix="dfci-infra-")
+    assert "--placement-prefix dfci-infra-" in argv, (
+        f"EXECUTE={execute!r}: the prefix never reached the sweep — argv was {argv!r}"
+    )
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_prefix_fails_the_step(tmp_path, blank):
+    """`"".startswith(x)` is True for every string, so a blank prefix claims every
+    deployment on the account — including other repos'."""
+    proc, argv, _ = _run(tmp_path, execute="true", prefix=blank)
+    assert proc.returncode != 0, "a blank placement-prefix was accepted"
+    assert "--placement-prefix" not in argv, "the sweep ran despite a blank prefix"
+
+
+def test_a_present_prefix_does_not_fail_the_step(tmp_path):
+    """Anti-vacuity partner: a step that always failed would satisfy the test above."""
+    proc, _, _ = _run(tmp_path, execute="true", prefix="dfci-infra-")
+    assert proc.returncode == 0, proc.stderr[:300]
+
+
+def test_the_prefix_input_is_required_with_no_default():
+    """A default would silently hand every consumer the mechanism's own prefix — which is
+    correct for exactly one repo and wrong, invisibly, for all the others."""
+    doc = yaml.safe_load(WF.read_text())
+    call = doc[True]["workflow_call"] if True in doc else doc["on"]["workflow_call"]
+    spec = call["inputs"]["placement-prefix"]
+    assert spec["required"] is True
+    assert "default" not in spec, "a default prefix makes an inert adoption the easy path"

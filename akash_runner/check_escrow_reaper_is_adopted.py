@@ -36,6 +36,7 @@ import argparse
 
 import _cli
 import re
+import subprocess
 from pathlib import Path
 
 CANONICAL = "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable-akash-escrow-reaper.yml"
@@ -47,6 +48,9 @@ ADOPTION = re.compile(
     r"uses:\s*" + re.escape(CANONICAL) + r"@(?P<ref>[A-Za-z0-9._/-]+)",
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+
+# The prefix a caller declares it will sweep. `with:` block, so a plain key scan suffices.
+PREFIX_INPUT = re.compile(r"^\s*placement-prefix:\s*[\"']?([^\"'\s#]+)", re.M)
 
 # Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
 # `balance`, `list` and `tag` read or annotate and leak nothing.
@@ -72,6 +76,34 @@ def _executable(text: str) -> str:
     )
 
 
+def _repo_text(workflows_dir: Path) -> str:
+    """Tracked text of the repo the workflows dir belongs to, for the prefix-evidence check.
+
+    ⚠ Bounded on purpose: only files git tracks, only text, and a size cap. An unbounded walk
+    would read `.venv` and node_modules and turn a fast rule into a slow one, which is how a
+    rule stops being run.
+    """
+    root = workflows_dir.resolve().parent.parent
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files"],
+            capture_output=True, text=True, timeout=20, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if out.returncode != 0:
+        return ""
+    chunks: list[str] = []
+    for rel in out.stdout.splitlines()[:4000]:
+        f = root / rel
+        try:
+            if f.is_file() and f.stat().st_size < 512_000:
+                chunks.append(f.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    return "\n".join(chunks)
+
+
 def audit(d: Path) -> tuple[list[str], bool]:
     """Return (findings, in_scope) for one `.github/workflows` directory."""
     files = sorted(d.glob("*.yml")) + sorted(d.glob("*.yaml"))
@@ -90,6 +122,35 @@ def audit(d: Path) -> tuple[list[str], bool]:
     for p, t in texts.items():
         for m in ADOPTION.finditer(t):
             adopters.append(p.name)
+            # ⛔ ADOPTED IS NOT THE SAME AS AIMED. The mechanism's own default prefix is
+            # correct for exactly one repo; a consumer that stamps something else and does
+            # not say so gets a reaper matching NONE of its deployments — 0 closable
+            # forever, while this very rule reads green. An inert reaper is WORSE than an
+            # absent one, because it manufactures a signal over an unswept account.
+            #
+            # ⚠ The check is that the declared prefix appears SOMEWHERE ELSE in the repo,
+            # which is evidence the repo actually stamps it. Deliberately not a stamp
+            # parser: the stamp lives in workflow shell in one repo and in SDL files in
+            # another, and a parser that understood only one would fail correct code in the
+            # other — and a rule that fails correct code gets exempted, not fixed.
+            declared = PREFIX_INPUT.search(t)
+            if not declared:
+                findings.append(
+                    f"{p.name}: calls the canonical escrow reaper but declares no "
+                    "`placement-prefix`. The reaper would sweep under the mechanism's own "
+                    "default and match none of this repo's deployments."
+                )
+            else:
+                pfx = declared.group(1)
+                elsewhere = any(pfx in other for q, other in texts.items() if q != p)
+                if not elsewhere and pfx not in _repo_text(d):
+                    findings.append(
+                        f"{p.name}: declares `placement-prefix: {pfx}`, but that prefix "
+                        "appears nowhere else in this repo. Either it is not what this repo "
+                        "stamps — in which case the reaper matches nothing and reports 0 "
+                        "forever — or the stamp lives somewhere this check cannot see, and "
+                        "the two need reconciling."
+                    )
             ref = m.group("ref")
             if not SHA40.match(ref):
                 findings.append(

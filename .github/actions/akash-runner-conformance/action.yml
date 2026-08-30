@@ -243,9 +243,13 @@ runs:
           #   DigitalFrontier-infra  FAIL  akash-runner.yml, runner-time-to-ready.yml create
           #                                deployments; nothing adopts the reaper
           #   just-akash             FAIL  provider-canary.yml
-          #   akash-github-runner    FAIL  df-akash-gate.yml  (this repo is in its own scope)
+          #   akash-github-runner    NOT APPLICABLE — its only `just-akash deploy` is
+          #                                 df-akash-gate.yml:75, a COMMENTED-OUT sketch.
+          #                                 ⚠ The first measurement counted this repo as
+          #                                 FAILING; the rule was reading its own comments
+          #                                 as evidence. Fixing that moved it out of scope.
           #   df-wiki                NOT APPLICABLE — creates no deployments
-          # 3 of 3 in-scope repos fail, and that is the FINDING rather than a defect in the
+          # 2 of 2 in-scope repos fail, and that is the FINDING rather than a defect in the
           # rule: the canonical workflow landed in the same change, so no consumer has had a
           # SHA to pin yet. Enforcing now would red every consumer for a state they had no
           # opportunity to reach. PROMOTE WHEN all three adopt it at a pinned SHA.
