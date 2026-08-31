@@ -233,3 +233,71 @@ jobs:
         f"the real provider shape lost its exemption (exit {r.returncode}) — the fix must "
         f"kill the decoy WITHOUT flagging just-akash.\n{r.stdout}{r.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The delegation hop — the rule's own docstring named this blind spot
+# ---------------------------------------------------------------------------
+
+
+def test_machinery_in_a_delegated_script_is_seen(tmp_path):
+    """⛔ THE BLIND SPOT THE RULE NAMED ON ITSELF: 'provisioning reached through
+    `run: bash scripts/provision.sh` ... is invisible' — and this fleet ALREADY writes
+    workflows that way (blazing's reapers are `run: bash scripts/akash-runner-reaper.sh`).
+    Follow the hop, or the rule is one refactor from blind.
+
+    ⚠ The fixture uses the REAL layout — `.github/workflows/` under a repo root — because
+    the hop resolves scripts against the root, exactly as the dereg rule's does. A flat
+    tmpdir would point the resolver one directory too high and test nothing."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "provision.sh").write_text(
+        "cat > /tmp/runner.sdl.yaml <<'SDL'\n"
+        "  image: ghcr.io/akash-network/github-runner@sha256:7509763af8209796f3e7fde5fb536c742075ec1a59ad1b36e3c9c27bc3bafc67\n"
+        "SDL\n"
+        "RUNNER_NAME_PREFIX=ci- just-akash deploy /tmp/runner.sdl.yaml\n"
+    )
+    (workflows / "ci.yml").write_text(
+        "name: c\non: [push]\njobs:\n  p:\n    steps:\n      - run: bash scripts/provision.sh\n"
+    )
+    r = _run(workflows)
+    assert r.returncode == 1, (
+        f"machinery one hop into a script read as clean (exit {r.returncode}):\n"
+        f"{r.stdout}{r.stderr}"
+    )
+    assert "provision.sh" in r.stdout, (
+        f"the finding must name the SCRIPT, not only the workflow that calls it:\n{r.stdout}"
+    )
+
+
+def test_a_delegated_script_COMMENT_mention_is_not_provisioning(tmp_path):
+    """★ THE HOP MUST NOT UNSTRIP. A shell comment carrying `RUNNER_NAME_PREFIX=` is
+    prose, not a call site — the comment-stripping has to extend across the delegation
+    hop or following it trades one blind spot for a false positive."""
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "reaper.sh").write_text(
+        "# the old SDL set RUNNER_NAME_PREFIX=df-flow- inline; the prefix moved to the caller\n"
+        "gh api -X DELETE \"orgs/${ORG}/actions/runners/${id}\"\n"
+    )
+    (workflows / "reap.yml").write_text(
+        "name: r\non: [push]\njobs:\n  p:\n    steps:\n      - run: bash scripts/reaper.sh\n"
+    )
+    r = _run(workflows)
+    assert r.returncode == NOT_JUDGEABLE, (
+        f"a comment in a delegated script read as provisioning (exit {r.returncode}):\n"
+        f"{r.stdout}{r.stderr}"
+    )
+
+
+def test_an_absolute_script_path_is_the_HOST_not_the_repo(tmp_path):
+    """/home/... is a file on the runner host (Blazing-Back's sentinel-pentest runs one);
+    it cannot exist at check time and is not a delegation this rule can judge. Same guard
+    as the dereg rule's, for the same measured reason."""
+    _wf(tmp_path, "ci.yml", (
+        "name: c\non: [push]\njobs:\n  p:\n    steps:\n      - run: /home/pentest/provision.sh\n"
+    ))
+    r = _run(tmp_path)
+    assert r.returncode == NOT_JUDGEABLE, f"{r.returncode}:\n{r.stdout}{r.stderr}"

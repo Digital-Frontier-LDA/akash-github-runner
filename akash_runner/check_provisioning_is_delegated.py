@@ -46,12 +46,11 @@ these is a pass-shaped answer (found by DEVOPS-core in review; neither is live t
 
   * `env:` IS NEVER READ. `RUNNER_NAME_PREFIX` set at job or workflow level, rather than
     inside a `run:` block, evades the SDL signal entirely.
-  * ONLY `run:` BLOCKS ARE READ. Provisioning reached through `run: bash scripts/provision.sh`
-    (signal lives in the script) or `uses: ./.github/actions/provision-pool` (a local
-    composite — not a run block, and DELEGATE will not match it either) is invisible, and the
-    repo reads NOT-JUDGEABLE rather than flagged.
-    ⚠ This fleet ALREADY writes workflows that way — blazing's reapers are
-    `run: bash scripts/akash-runner-reaper.sh`. It is one refactor from live.
+  * READABLE repo scripts ARE followed now (the hop below); what remains invisible:
+    an UNREADABLE script (absent from the tree, or a host-absolute path — those name the
+    runner host, not the repo), and `uses: ./.github/actions/provision-pool` (a local
+    composite — not a run block, and DELEGATE will not match it either). Both still read
+    NOT-JUDGEABLE rather than flagged.
 
 ⚠ ADVISORY ON ARRIVAL. It fails a live consumer on day one, and promotion is gated on a
 condition that is SATISFIABLE — see the PR: both the fix AND the consumer's pin must move,
@@ -64,6 +63,7 @@ from __future__ import annotations
 import argparse
 
 import _cli
+from check_dereg_backstop import DELEGATES_TO_SCRIPT
 import re
 import sys
 from pathlib import Path
@@ -108,28 +108,64 @@ def _steps(doc: dict):
                 yield st
 
 
-def inspect(path: Path) -> tuple[bool, bool]:
-    """(provisions_locally, delegates_to_just_akash) for one workflow."""
+def _delegated_hits(path: Path, run_text: str) -> list[str]:
+    """Repo-relative scripts a `run:` block hands off to that THEMSELVES carry the signal.
+
+    ⛔ THE HOP THE FIRST VERSION DID NOT TAKE, named in its own docstring and measured as
+    one refactor from live: this fleet already writes `run: bash scripts/x.sh` workflows
+    (blazing's reapers). The guards mirror check_dereg_backstop._delegated_text — scripts
+    resolve against the REPO ROOT (`<root>/.github/workflows/<file>` means the root is
+    three levels up from the file); absolute paths and `..` name the runner HOST, not this
+    tree, and are skipped; an UNREADABLE script is skipped, not treated as evidence — the
+    workflow's own run text is what it is either way.
+    """
+    root = path.parents[2]
+    hits: list[str] = []
+    for match in DELEGATES_TO_SCRIPT.finditer(run_text):
+        rel = match.group("path") or match.group("rel") or ""
+        if rel.startswith("./"):
+            rel = rel[2:]
+        if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # The strip must extend across the hop: a `# RUNNER_NAME_PREFIX=…` COMMENT in the
+        # script is prose, not a call site.
+        if PROVISION.search(_strip_shell_comments(text)):
+            hits.append(rel)
+    return hits
+
+
+def inspect(path: Path) -> tuple[bool, bool, list[str]]:
+    """(provisions_locally, delegates_to_just_akash, scripts_carrying_the_signal)."""
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
     except yaml.YAMLError:
-        return (False, False)
+        return (False, False, [])
     if not isinstance(doc, dict):
-        return (False, False)
+        return (False, False, [])
     provisions = delegates = False
+    run_texts: list[str] = []
     for st in _steps(doc):
         run = st.get("run")
-        if isinstance(run, str) and PROVISION.search(_strip_shell_comments(run)):
-            provisions = True
+        if isinstance(run, str):
+            run_texts.append(run)
+            if PROVISION.search(_strip_shell_comments(run)):
+                provisions = True
         uses = st.get("uses")
         if isinstance(uses, str) and DELEGATE.search(uses):
             delegates = True
+    via = _delegated_hits(path, "\n".join(run_texts))
+    if via:
+        provisions = True
     # a reusable consumed at job level, not step level
     for job in (doc.get("jobs") or {}).values():
         if isinstance(job, dict) and isinstance(job.get("uses"), str):
             if DELEGATE.search(job["uses"]):
                 delegates = True
-    return (provisions, delegates)
+    return (provisions, delegates, via)
 
 
 def is_the_provider(workflows: Path) -> bool:
@@ -182,7 +218,7 @@ def is_the_provider(workflows: Path) -> bool:
     #     just-akash/.github/workflows/runner-pool.yml -> 1 match
     #                                                     `- RUNNER_NAME_PREFIX=just-akash-${RUNNER_LABEL}`
     #     the three-line decoy                         -> 0 matches, correctly flagged
-    provisions, _ = inspect(pool)
+    provisions, _, _via = inspect(pool)
     return provisions
 
 
@@ -210,11 +246,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     docs = sorted(p for p in args.workflows.glob("*.y*ml"))
-    provisioners = []
+    provisioners: list[tuple[Path, list[str]]] = []
     for p in docs:
-        provisions, delegates = inspect(p)
+        provisions, delegates, via = inspect(p)
         if provisions and not delegates:
-            provisioners.append(p)
+            provisioners.append((p, via))
 
     # ⚠ DELEGATION IS A PROVISIONING PATH, and counting only LOCAL provisioning made a
     # perfectly compliant consumer read as NOT-JUDGEABLE. Caught by this rule's own test:
@@ -222,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
     # it is the compliant case — and reporting "nothing to judge" there understates
     # compliance and hides the very adoption the standard is asking for.
     seen = [inspect(p) for p in docs]
-    any_provisioning = any(prov or deleg for prov, deleg in seen)
+    any_provisioning = any(prov or deleg for prov, deleg, _via in seen)
     if not any_provisioning:
         print(
             f"Provisioning-delegation: 0 workflow(s) under {args.workflows} provision a runner "
@@ -235,9 +271,16 @@ def main(argv: list[str] | None = None) -> int:
             "no workflow provisions a runner here, so §1 has nothing to judge.",
         )
 
-    for p in provisioners:
+    for p, via in provisioners:
+        where = (
+            f" (the machinery sits in delegated script(s) {', '.join(via)}, which this "
+            f"rule follows)"
+            if via
+            else ""
+        )
         print(
-            f"::error title=Provisioning not delegated::{p.name} provisions a runner locally "
+            f"::error title=Provisioning not delegated::{p.name} provisions a runner locally"
+            f"{where} "
             f"(a `run:` step invoking `just-akash deploy` or rendering RUNNER_NAME_PREFIX) and "
             f"does not consume "
             f"`<owner>/just-akash/.github/workflows/runner-pool.yml@<ref>`. Standard §1: "
