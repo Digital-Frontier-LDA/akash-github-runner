@@ -186,3 +186,70 @@ def test_the_canonical_path_names_a_workflow_that_exists_here():
     assert (HERE.parent / rel).is_file(), (
         f"{rule.CANONICAL} names a file this repo does not have"
     )
+
+
+def test_a_lookalike_owner_is_not_the_publisher(tmp_path):
+    """⛔ REGRESSION FOR A SUBSTRING MATCH THAT EXCUSED IMPOSTORS.
+
+    `"Digital-Frontier-LDA/akash-github-runner" in
+     "…/not-Digital-Frontier-LDA/akash-github-runner"` is True. An owner whose name merely
+    ENDS WITH the canonical owner would have been read as the publisher and excused from
+    adopting the reaper — the exemption granted to precisely the repo it should never reach.
+    """
+    p = _run(
+        tmp_path,
+        {
+            "prov.yml": REGISTERS,
+            "reusable-stale-runner-reaper.yml": "on:\n  workflow_call:\n",
+        },
+        origin="https://github.com/not-Digital-Frontier-LDA/akash-github-runner.git",
+    )
+    assert p.returncode == 1, p.stdout
+    assert "PUBLISHES" not in p.stdout
+
+
+def test_the_same_owner_repo_on_another_host_is_not_the_publisher(tmp_path):
+    """An owner/repo pair is an identity only RELATIVE TO A FORGE. The same pair on a
+    different host is a different repository, and a path-only comparison cannot see that."""
+    p = _run(
+        tmp_path,
+        {
+            "prov.yml": REGISTERS,
+            "reusable-stale-runner-reaper.yml": "on:\n  workflow_call:\n",
+        },
+        origin="https://evil.example.com/x/Digital-Frontier-LDA/akash-github-runner.git",
+    )
+    assert p.returncode == 1, p.stdout
+
+
+def test_remote_identity_parses_the_forms_git_actually_emits():
+    """⚠ Keyed to REAL remote spellings, not a single happy path. scp-style (`git@host:o/r`)
+    is what an SSH clone writes, and a rule that only understood https would silently treat
+    every SSH checkout of the publisher as a consumer."""
+    from check_stale_runner_reaper_is_adopted import _remote_identity as ident
+
+    canon = "digital-frontier-lda/akash-github-runner"
+    assert (
+        ident("https://github.com/Digital-Frontier-LDA/akash-github-runner.git")
+        == canon
+    )
+    assert ident("git@github.com:Digital-Frontier-LDA/akash-github-runner.git") == canon
+    assert (
+        ident("https://x-token@github.com/Digital-Frontier-LDA/akash-github-runner")
+        == canon
+    )
+    # different owner, different repo, different host, and a deeper path
+    assert (
+        ident("https://github.com/not-Digital-Frontier-LDA/akash-github-runner")
+        != canon
+    )
+    assert (
+        ident("https://github.com/Digital-Frontier-LDA/akash-github-runner-extra")
+        != canon
+    )
+    assert (
+        ident("https://evil.example.com/x/Digital-Frontier-LDA/akash-github-runner")
+        is None
+    )
+    assert ident("https://github.com/a/b/c") is None
+    assert ident("") is None

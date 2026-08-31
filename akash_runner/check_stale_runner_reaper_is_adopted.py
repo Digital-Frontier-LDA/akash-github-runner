@@ -131,8 +131,47 @@ def _is_the_publisher(d: Path) -> bool:
         return False
     if out.returncode != 0:
         return False
-    owner_repo = CANONICAL.split("/.github/", 1)[0]
-    return owner_repo.lower() in out.stdout.strip().lower().removesuffix(".git")
+    return _remote_identity(out.stdout) == CANONICAL.split("/.github/", 1)[0].lower()
+
+
+def _remote_identity(remote_url: str) -> str | None:
+    """``owner/repo`` for a GitHub remote, lowercased. None for anything else.
+
+    ⛔ THIS WAS A SUBSTRING TEST AND THAT GRANTED THE EXEMPTION TO IMPOSTORS:
+
+        https://github.com/not-Digital-Frontier-LDA/akash-github-runner   -> matched
+        https://evil.example.com/x/Digital-Frontier-LDA/akash-github-runner -> matched
+
+    Both contain the canonical ``owner/repo`` as a substring. The first is a different
+    owner; the second is a different HOST. Either would have been read as "this is the
+    publisher" and excused from adopting the reaper.
+
+    ⚠ The irony is on the record: `placement_name_is_ours`, in the module this rule was
+    modelled on, carries the note "Exact match, never prefix" — written after a trailing
+    hyphen let `dfci-infra-runner-sidecar` through. The identical mistake was made one
+    function over, in the repair for a DIFFERENT loose match. A containment test is the
+    default the fingers reach for; it has to be refused deliberately each time.
+
+    ⭐ The host is compared, not just the path. An owner/repo pair is only an identity
+    relative to a forge — the same pair on another host is a different repository.
+    """
+    url = remote_url.strip()
+    if not url:
+        return None
+    # scp-style: git@host:owner/repo.git
+    if "://" not in url and ":" in url:
+        host, _, path = url.rpartition(":")
+        host = host.rpartition("@")[2]
+    else:
+        rest = url.split("://", 1)[1] if "://" in url else url
+        rest = rest.rpartition("@")[2]  # strip any userinfo
+        host, _, path = rest.partition("/")
+    if host.lower() not in ("github.com", "www.github.com"):
+        return None
+    parts = [p for p in path.removesuffix(".git").strip("/").split("/") if p]
+    if len(parts) != 2:  # exactly owner/repo — never a deeper path
+        return None
+    return "/".join(parts).lower()
 
 
 def audit(d: Path) -> tuple[list[str], bool]:
