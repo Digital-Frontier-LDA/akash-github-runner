@@ -85,6 +85,18 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
+    "check_stale_runner_reaper_is_adopted.py": (
+        "ADVISORY because the remedy it demands is NOT YET WRITTEN. Measured 2026-08-31 on "
+        "origin/main: just-akash ADOPTS at a pinned sha; Blazing-Back, blazing and df-cicd "
+        "do not. Blazing-Back's adoption is BB#1745 — an OPEN ISSUE, not an open PR, which "
+        "is a stronger reason for advisory than the one first recorded here: there is no "
+        "branch awaiting merge, the work is unstarted. BB#1745's own title states the "
+        "finding this rule generalises: the reaper 'is vendored for a reason that no longer "
+        "applies'. Enforcing a rule whose fix nobody has written teaches the fleet to EXEMPT "
+        "the rule rather than adopt the reaper. PROMOTE WHEN: BB#1745 is closed by a landed "
+        "adoption AND blazing and df-cicd each have either a landed adoption or a recorded "
+        "decision not to adopt."
+    ),
     "check_provisioning_is_delegated.py": (
         "ADVISORY because it FAILS TWO CURRENT CONSUMERS TODAY, by design. Standard §1 "
         "mandates that runner provisioning live ONLY in just-akash, consumed via `uses:` at "
