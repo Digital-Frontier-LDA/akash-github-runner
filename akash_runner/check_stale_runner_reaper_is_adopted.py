@@ -28,10 +28,18 @@ It reported "stale (closable): 0" — a false negative that reads exactly like a
 A shared implementation does not by itself prevent a misaimed prefix, but it collapses N
 places that can be misaimed into one, and puts that one under the fleet's whole test suite.
 
-⛔ ADVISORY ON PURPOSE, AND THE REASON IS A DATE, NOT A DOUBT. Blazing-Back's adoption is
-open as BB#1745. Promoting this to ENFORCING while the fix it demands is an unmerged PR
-would fail a repo for not having merged something — which teaches the fleet to exempt the
-rule rather than to adopt the reaper. Promote it once BB#1745 lands.
+⛔ ADVISORY ON PURPOSE, AND THE REASON IS A STATE, NOT A DOUBT. Blazing-Back's adoption is
+BB#1745 — an OPEN ISSUE, not an open PR. There is no branch awaiting merge; the work is
+unstarted. Promoting this to ENFORCING would fail a repo for not having written something,
+which teaches the fleet to exempt the rule rather than to adopt the reaper.
+
+⚠ The distinction is load-bearing and this docstring first got it wrong. "An unmerged PR"
+and "an unstarted issue" justify the same verdict here but describe different worlds: the
+first says the fix exists and is queued, the second says nobody has begun. Promote once
+BB#1745 is CLOSED BY A LANDED ADOPTION — not merely closed.
+
+★ BB#1745's own title is the finding this rule generalises: the reaper "is vendored for a
+reason that no longer applies — agr's canonical copy is reachable".
 
 MEASURED 2026-08-31, executable `uses:` only (comments stripped):
 
