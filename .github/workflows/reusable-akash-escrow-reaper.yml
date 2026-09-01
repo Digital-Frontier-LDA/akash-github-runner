@@ -73,6 +73,26 @@ on:
         required: false
         default: false
         type: boolean
+      reap-owned:
+        description: >-
+          Also close deployments of ANY service whose on-chain group name carries
+          `placement-prefix` and which are older than the mechanism's owned-age floor (48h).
+          Defaults FALSE, so no consumer changes behaviour by bumping the pin.
+
+          ⛔ WHY THIS EXISTS. The mechanism classifies by SERVICE NAME — `probe`, `backtest`,
+          `runner`. Anything else returns LEAVE-real-or-unknown, where no age is consulted, so
+          `stamp_run`'s documented "falls back to the age rule" had no code path. MEASURED
+          2026-09-01: six Blazing-Back E2E deployments (service `app`) held 28.28 ACT for
+          62-139h while the sweep reported `stale (closable): 0` every run.
+
+          ⚠ A service-name allowlist is a CONVENTION BETWEEN REPOS; ownership is a FACT on
+          chain. This flag lets the same `group_spec.name` proof `--reap-runners` already
+          rests on gate the age rule for any service. Costs one chain read per deployment,
+          so it is opt-in rather than default.
+        required: false
+        default: false
+        type: boolean
+
       placement-prefix:
         description: >-
           The on-chain provenance marker a deployment must carry to count as THIS repo's.
@@ -157,6 +177,7 @@ jobs:
           # cases right.
           EXECUTE: ${{ inputs.execute }}
           PLACEMENT_PREFIX: ${{ inputs.placement-prefix }}
+          REAP_OWNED: ${{ inputs.reap-owned }}
         run: |
           set -euo pipefail
           # ⛔ REFUSED IF BLANK. `"".startswith(x)` is True for every string, so an empty
@@ -172,6 +193,18 @@ jobs:
             MODE=(--reap-runners --execute --placement-prefix "$PLACEMENT_PREFIX")
           else
             MODE=(--reap-runners --placement-prefix "$PLACEMENT_PREFIX")
+          fi
+          # ⭐ SAME LESSON AS `--reap-runners` DIRECTLY BELOW, ONE CLASS WIDER. Without the
+          # flag, every non-runner service returns LEAVE-real-or-unknown and the sweep cannot
+          # reach the population it exists for — it just prints a clean total. Compared as a
+          # STRING against "true": a boolean input arrives as the text "false", which is
+          # non-empty and would fire under `${VAR:+...}`.
+          # ⛔ `${VAR:-}`, NOT `$VAR`. This block runs under `set -euo pipefail`, so an UNSET
+          # REAP_OWNED aborts the whole step before MODE is built — the reaper would pass no
+          # arguments at all and close nothing, for every existing consumer. Caught by
+          # test_reap_runners_is_unconditional, which read an empty argv.
+          if [ "${REAP_OWNED:-}" = "true" ]; then
+            MODE+=(--reap-owned)
           fi
           # ⛔ `--reap-runners` IS UNCONDITIONAL, AND WITHOUT IT THIS CANNOT REACH THE
           # POPULATION IT EXISTS FOR. With the flag off, classify() returns

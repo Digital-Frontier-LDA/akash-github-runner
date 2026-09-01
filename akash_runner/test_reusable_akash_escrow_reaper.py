@@ -59,6 +59,7 @@ def _run(
     sweep_rc: int = 0,
     closed_line: str = "closed=20 failed=0",
     prefix: str = "just-akash-",
+    reap_owned: str | None = None,
 ):
     """Execute the real step script with a fake `uv` that records its argv."""
     bindir = tmp_path / "bin"
@@ -76,6 +77,9 @@ def _run(
     env = {
         "PATH": f"{bindir}:/usr/bin:/bin",
         "EXECUTE": execute,
+        # ⚠ Only set when the caller asks. Leaving it UNSET by default keeps every existing
+        # test exercising the `set -u` path that aborted the whole step.
+        **({"REAP_OWNED": reap_owned} if reap_owned is not None else {}),
         "PLACEMENT_PREFIX": prefix,
         "AKASH_API_KEY": "stub",
         "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
@@ -226,3 +230,53 @@ def test_the_prefix_input_is_required_with_no_default():
     spec = call["inputs"]["placement-prefix"]
     assert spec["required"] is True
     assert "default" not in spec, "a default prefix makes an inert adoption the easy path"
+
+
+# ── the reap-owned flag: argv-pinned, both directions ─────────────────────────────────
+#
+# ⛔ WHY THESE EXIST. The flag was added by hand-checking the bash in a shell. That verified
+# the boolean and MISSED what actually broke: `[ "$REAP_OWNED" = "true" ]` under
+# `set -euo pipefail` ABORTS on an unset variable, so the step exited before building MODE
+# and passed NO arguments at all — for every consumer, opted-in or not. A hand check of the
+# happy path cannot see that; only running the real script with the variable ABSENT can.
+
+
+@pytest.mark.parametrize("execute", ["true", "false"])
+def test_reap_owned_true_adds_the_flag(tmp_path, execute):
+    _, argv, _ = _run(tmp_path, execute=execute, reap_owned="true")
+    assert "--reap-owned" in argv, (
+        f"REAP_OWNED=true with EXECUTE={execute!r} did not pass --reap-owned; every "
+        "non-runner service stays LEAVE-real-or-unknown and the sweep reports 0 closable "
+        "against a real leak"
+    )
+
+
+@pytest.mark.parametrize("value", ["false", ""])
+def test_reap_owned_falsey_does_not_add_the_flag(tmp_path, value):
+    """⛔ A BOOLEAN INPUT ARRIVES AS THE TEXT "false", WHICH IS NON-EMPTY.
+
+    `${REAP_OWNED:+--reap-owned}` would fire on it. The step compares against the literal
+    string instead, and this pins that: the DEFAULT input value must not silently widen a
+    destructive sweep.
+    """
+    _, argv, _ = _run(tmp_path, execute="true", reap_owned=value)
+    assert "--reap-owned" not in argv, (
+        f"REAP_OWNED={value!r} added --reap-owned — a falsey input widened the sweep"
+    )
+
+
+@pytest.mark.parametrize("execute", ["true", "false", ""])
+def test_an_unset_reap_owned_does_not_abort_the_step(tmp_path, execute):
+    """⛔ THE REGRESSION FROM THIS PR'S FIRST DRAFT, PINNED.
+
+    With `set -euo pipefail` an unset REAP_OWNED aborted before MODE was built. The tell is
+    an EMPTY argv, not a wrong one — the sweep appears to run and closes nothing.
+    `--reap-runners` must still be present when the new variable is absent entirely.
+    """
+    _, argv, _ = _run(tmp_path, execute=execute)  # REAP_OWNED deliberately not set
+    assert argv.strip(), (
+        f"EXECUTE={execute!r} with REAP_OWNED unset produced an EMPTY argv — the step "
+        "aborted under `set -u` before building MODE, so the reaper closes nothing"
+    )
+    assert "--reap-runners" in argv
+    assert "--reap-owned" not in argv
