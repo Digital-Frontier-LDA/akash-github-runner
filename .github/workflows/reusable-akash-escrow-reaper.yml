@@ -87,8 +87,12 @@ on:
 
           ⚠ A service-name allowlist is a CONVENTION BETWEEN REPOS; ownership is a FACT on
           chain. This flag lets the same `group_spec.name` proof `--reap-runners` already
-          rests on gate the age rule for any service. Costs one chain read per deployment,
-          so it is opt-in rather than default.
+          rests on gate the age rule for any service.
+
+          ⚠ Costs one chain read per CANDIDATE, not per deployment: the mechanism skips
+          service sets it can decide without provenance ({probe}, {backtest}, {runner},
+          none) and anything younger than the age floor. Still opt-in, because on a large
+          account the candidate set can be most of it.
         required: false
         default: false
         type: boolean
