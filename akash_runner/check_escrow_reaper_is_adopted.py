@@ -63,7 +63,52 @@ MECHANISM_INVOCATION = re.compile(r"just_akash\.cleanup_stale")
 
 # Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
 # `balance`, `list` and `tag` read or annotate and leak nothing.
+# Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
+# `balance`, `list` and `tag` read or annotate and leak nothing.
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
+
+# ⛔ THE LITERAL IS NOT HOW EVERY REPO SPELLS IT, AND THE MISS IS SILENT AND TOTAL.
+# Measured 2026-09-03: `Borduas-Holdings/blazing` held 85 active deployments and this rule
+# reported "creates no Akash deployments — nothing to leak". It installs the CLI into a
+# variable and invokes that:
+#
+#     akash-runner.yml:442   JA="uvx --from git+https://…/just-akash@main just-akash"
+#     akash-runner.yml:463   $JA deploy --sdl /tmp/sdl.yaml --bid-wait 60 …
+#
+# ⚠ AND THE CONSEQUENCE OUTLIVED THE ADOPTION. blazing adopted the reaper the same day;
+# deleting that adoption again produced the IDENTICAL verdict, rc=0. So the repo this rule
+# most concerns had no guard either before or after — "a ratified mechanism with zero
+# executions", inside the guard written to prevent it.
+#
+# ⛔ WHY NOT A BARE `\$VAR deploy`. That matches `$KUBECTL deploy` and `$HELM deploy`, and
+# this rule is ENFORCING: a repo deploying something that is not Akash would be pulled into
+# scope and failed for not adopting an Akash escrow reaper. So the variable must be shown to
+# HOLD the CLI first. Two statements, and both must be present in the same workflow.
+_HOLDS_CLI = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)=\(?[^\n]*\bjust-akash\b")
+
+
+def _invokes(name: str) -> re.Pattern[str]:
+    """`$JA deploy`, `${JA} deploy`, and the array form this fleet also writes."""
+    return re.compile(
+        r"\$\{?" + re.escape(name) + r"\}?\s+deploy\b"
+        r"|\"\$\{" + re.escape(name) + r"\[@\]\}\"\s+deploy\b"
+    )
+
+
+# ⛔ DELEGATED CREATION IS STILL CREATION. A repo whose only deployments come from
+# `runner-pool.yml` spends real escrow and leaks it when the pool's own teardown does not
+# run — which is the case this reaper is the backstop for. Measured: no repo in the fleet
+# enters scope by this route ALONE today (blazing also matches the variable form,
+# just-akash also matches the literal), so it widens the rule's reasoning without widening
+# today's population.
+_DELEGATES_CREATION = re.compile(r"uses:\s*\S+/runner-pool\.yml@")
+
+
+def _creates(text: str) -> bool:
+    """True if this workflow creates Akash deployments, however it spells it."""
+    if CREATES.search(text) or _DELEGATES_CREATION.search(text):
+        return True
+    return any(_invokes(m.group("name")).search(text) for m in _HOLDS_CLI.finditer(text))
 
 
 def _executable(text: str) -> str:
@@ -122,7 +167,7 @@ def audit(d: Path) -> tuple[list[str], bool]:
         return ([f"no workflow files under {d} — cannot judge, refusing to pass"], True)
 
     texts = {p: _executable(p.read_text(encoding="utf-8", errors="replace")) for p in files}
-    creators = [p.name for p, t in texts.items() if CREATES.search(t)]
+    creators = [p.name for p, t in texts.items() if _creates(t)]
     if not creators:
         return ([], False)
 
