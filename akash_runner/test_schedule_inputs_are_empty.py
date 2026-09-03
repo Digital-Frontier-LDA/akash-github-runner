@@ -120,3 +120,91 @@ def test_a_missing_directory_is_not_a_silent_pass(capsys, tmp_path):
     must SAY so — an unqualified 0 is indistinguishable from 'checked, all clean'."""
     assert chk.main(["--workflows-dir", str(tmp_path / "nope")]) == 0
     assert "not a directory" in capsys.readouterr().out
+
+
+# ── forms that DO discriminate, and were reported as if they did not ─────────
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # The reference implementation's own guard. Measured 2026-09-03 in
+        # Borduas-Holdings/Blazing-Back's escrow-reaper.yml, the caller this repo ships
+        # as the example for reusable-akash-escrow-reaper.yml.
+        "execute: ${{ inputs.execute == true }}",
+        "execute: ${{ inputs.execute == 'true' }}",
+        # The same question as the accepted `==` form, asked the other way round.
+        "dry-run: ${{ github.event_name != 'schedule' && inputs.dry-run }}",
+    ],
+)
+def test_a_comparison_is_not_a_fall_through(expr):
+    """No `||` anywhere in these. A schedule supplies nothing, so `null == true` is FALSE
+    on every cron firing — the safe value, reached by comparison rather than by a default
+    nobody passed. Reporting it teaches the fleet's most-copied caller that the rule does
+    not understand the shape it recommends by example."""
+    assert chk.offending_expressions(expr) == []
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ⛔ THE ASYMMETRY IS THE POINT. An absent input can never equal `true`; it very
+        # easily equals `false`, and THAT yields true under a schedule — the silent
+        # destructive default this rule exists to catch.
+        "destroy: ${{ inputs.destroy == false }}",
+        # A comparison must not launder a fall-through sharing the line.
+        "x: ${{ (inputs.a == true) || inputs.b }}",
+        "DRY_RUN: ${{ inputs.dry_run || 'false' }}",
+    ],
+)
+def test_the_comparison_allowance_does_not_open_a_hole(expr):
+    assert chk.offending_expressions(expr) != []
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ⛔ TRUE ON A SCHEDULED RUN, so it discriminates nothing on the path that matters.
+        # `!= 'workflow_dispatch'` reads like the mirror of `!= 'schedule'` and is its
+        # opposite: the guard passes on the cron firing and the `||` default still wins.
+        # An exemption that fires on the cron path is worse than the finding it silences.
+        "x: ${{ github.event_name != 'workflow_dispatch' && (inputs.dry_run || 'false') }}",
+        "y: ${{ github.event_name != 'push' && (inputs.dry_run || 'false') }}",
+    ],
+)
+def test_a_negation_that_is_true_on_a_cron_is_not_a_discriminator(expr):
+    assert chk.offending_expressions(expr) != []
+
+
+def test_the_safe_negation_is_still_accepted():
+    """Control: restricting `!=` must not have removed the form it was widened for."""
+    assert (
+        chk.offending_expressions(
+            "d: ${{ github.event_name != 'schedule' && inputs.dry-run }}"
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ⛔ THE SAFETY IS THE `&&`, NOT THE COMPARISON. With `||` the input branch is
+        # evaluated on every cron firing, so the comparison exempts the very fall-through
+        # it appears to guard.
+        "x: ${{ github.event_name != 'schedule' || (inputs.dry_run || 'false') }}",
+    ],
+)
+def test_a_negation_that_does_not_short_circuit_is_not_a_discriminator(expr):
+    assert chk.offending_expressions(expr) != []
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "a: ${{ github.event_name != 'schedule' && inputs.dry-run }}",
+        "b: ${{ (github.event_name != 'schedule') && inputs.dry-run }}",
+    ],
+)
+def test_the_short_circuiting_negation_is_still_accepted(expr):
+    """Control, including the parenthesised form a reader would plausibly write."""
+    assert chk.offending_expressions(expr) == []

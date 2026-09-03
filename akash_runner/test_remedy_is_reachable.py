@@ -67,6 +67,34 @@ def test_the_exemption_is_advertised_with_where_it_lives() -> None:
     )
 
 
+def _rule_source_docstring() -> str:
+    """The rule's module docstring, read from SOURCE rather than imported — this file
+    already reads the rule as text elsewhere, and importing it would run its argparse
+    setup for a string."""
+    import ast
+
+    return ast.get_docstring(ast.parse(RULE.read_text())) or ""
+
+
+def test_the_docstring_does_not_offer_the_exemption_as_the_readers_own() -> None:
+    """The MESSAGE was corrected and the DOCSTRING was not, so the unreachable advice
+    survived where a maintainer reads it.
+
+    It said "or declare in `SCHEDULE_INPUT_EXEMPT` why the empty value is safe there" —
+    addressed to the consumer, about a dict in this repo. Same defect as the one this file
+    already guards in the emitted message, one surface over: a remedy is unreachable
+    wherever it is READ, not only where it is printed.
+    """
+    doc = _rule_source_docstring()
+    if "SCHEDULE_INPUT_EXEMPT" not in doc:
+        return  # no longer offered there at all — also a valid resolution
+    assert UPSTREAM in doc or "not yours to add" in doc.lower() or "cannot edit" in doc.lower(), (
+        "the module docstring offers SCHEDULE_INPUT_EXEMPT without saying a consumer "
+        "cannot edit it. The emitted message already says so; this is the same advice "
+        "going stale on the other surface."
+    )
+
+
 def test_the_suggested_boolean_expression_does_not_invert_an_explicit_false() -> None:
     """`inputs.X || 'true'` turns a deliberate "go live" into a dry run.
 
