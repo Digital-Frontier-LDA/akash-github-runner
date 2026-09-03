@@ -20,10 +20,10 @@ better than one that implies adoption it does not have.
 
 | reusable | consumer | status | evidence |
 |---|---|---|---|
-| `reusable-akash-runner-conformance.yml` | `Digital-Frontier-LDA/just-akash` → `.github/workflows/runner-conformance.yml` | `NEVER-GREEN` | 8 runs, 8 failures, all `jobs=0`. Root cause measured: a **public** repo cannot call a reusable from a **private/internal** one. This repo exists to remove that blocker. See "Why this repo exists" in the README. |
+| `reusable-akash-runner-conformance.yml` | `Digital-Frontier-LDA/just-akash`, `Borduas-Holdings/Blazing-Back`, `Borduas-Holdings/blazing` — each `.github/workflows/runner-conformance.yml` | `GREEN` | Runs `33748069252` (just-akash), `33725444826` (Blazing-Back), `33726415072` (blazing), all 2026-09-03, all with jobs. This row read `NEVER-GREEN` on 8 runs / 8 failures / `jobs=0`, whose measured cause was that a public repo cannot call a reusable from a private/internal one. Publishing this repo removed the blocker — which is what the row predicted — and these three ids are the executions that close it. |
 
-| `reusable-akash-escrow-reaper.yml` | — | `NONE` | Landed with its adoption checker (`check_escrow_reaper_is_adopted.py`, ADVISORY). No consumer can pin it until this change merges and yields a SHA — `NONE` is the honest state for exactly one hop, and the checker is what makes it observable if it stays that way. The sibling row below has read `NONE` for a week, which is the reason the checker exists. |
-| `reusable-stale-runner-reaper.yml` | — | `NONE` | `workflow_call`-only. No consumer calls it from this repo yet; it moved here with the conformance reusable because it is the same domain. A row of `NONE` is the honest state, not a placeholder. |
+| `reusable-akash-escrow-reaper.yml` | `Borduas-Holdings/Blazing-Back` → `escrow-reaper.yml`; `Borduas-Holdings/blazing` → `akash-escrow-reaper.yml` | `GREEN` | Runs `33729677214` (Blazing-Back, 07:44) and `33734472017` (blazing, 08:38), 2026-09-03; both pin `@fcc385a6`. This row read `NONE` and called its checker ADVISORY — it is **ENFORCING** (`akash-runner-conformance/action.yml:209`). ⚠ blazing's fast/e2e pools remain OUTSIDE its `placement-prefix`: `runner-pool.yml` hardcoded the pool's placement key until just-akash#246, so those leases carry a marker no consumer can claim. |
+| `reusable-stale-runner-reaper.yml` | `Borduas-Holdings/blazing` → `akash-runner-registration-reaper.yml`; `Digital-Frontier-LDA/just-akash` → `reap-stale-runners.yml` | `GREEN` | Run `33751716199` (blazing, 11:48, hourly) — also the cross-org transport proof this file asks for: `Borduas-Holdings` → `Digital-Frontier-LDA`, resolving and running WITH jobs. blazing retired its repo-local `scripts/akash-runner-reaper.sh` in the same change, carrying all six prefixes to `name-prefixes`. just-akash's caller is adopted at a pinned SHA with no scheduled execution observed yet. ⚠ `Blazing-Back` is NOT a consumer despite matching a naive grep — its only mention is a COMMENT naming df-cicd's deleted copy (`stale-runner-reaper.yml:6`), which is why the rule strips comments before judging. |
 
 ## Why the status above is not a defect in this code
 
@@ -57,13 +57,20 @@ It was right. Measured again **2026-08-25 10:01Z**, org runner listing streamed 
 342 offline registrations across the two, and the rule that detects exactly this defect has been
 enforcing the whole time.
 
-⚠ **Neither repo calls this standard.** Verified 2026-08-25: no reference to
-`akash-github-runner` or `reusable-akash-runner-conformance.yml` in either repo's `.github/`.
+⚠ **This section recorded that neither repo called the standard.** True when written on
+2026-08-25; both do now. The row is corrected in place rather than deleted — the gap it
+describes, a standard whose own subjects did not consume it, is exactly what this file
+exists to make observable, and removing the evidence once it closes leaves nobody able to
+see that it was ever open.
 
-| repo | consumes conformance? |
-|---|---|
-| `Borduas-Holdings/blazing` | **NONE** |
-| `Borduas-Holdings/Blazing-Back` | **NONE** |
+| repo | consumes conformance? | evidence | was |
+|---|---|---|---|
+| `Borduas-Holdings/blazing` | ✅ `runner-conformance.yml` @ `f6bf24ec` | run `33726415072` | **NONE** on 2026-08-25 |
+| `Borduas-Holdings/Blazing-Back` | ✅ `runner-conformance.yml` @ `f6bf24ec` | run `33725444826` | **NONE** on 2026-08-25 |
+
+⚠ Both rows are an EXECUTABLE `uses:` read with comment lines stripped, and each cites an
+EXECUTION rather than the file's existence. "The file exists", "the pin resolves" and "the
+contract matches" were all true of the conformance reusable while it had never run.
 
 ### `df-cicd` — the author, measured 2026-08-25
 
