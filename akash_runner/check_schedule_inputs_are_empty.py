@@ -24,8 +24,18 @@ expression and gets two behaviours, and only one of them was designed.
 
 ⇒ WHAT THIS RULE DEMANDS. A workflow that (a) has an `on: schedule` trigger and (b)
 reads `github.event.inputs.*` must discriminate the path — typically
-`github.event_name == 'schedule' && <safe> || <the input expression>` — or declare in
-`SCHEDULE_INPUT_EXEMPT` why the empty value is safe there.
+`github.event_name == 'schedule' && <safe> || <the input expression>`.
+
+⚠ THE EXEMPTION IS NOT YOURS TO ADD, AND THIS LINE USED TO IMPLY IT WAS. It said "or
+declare in `SCHEDULE_INPUT_EXEMPT` why the empty value is safe there" — a dict that lives
+in THIS file, in akash-github-runner, which a consumer repo cannot edit. The emitted error
+message was corrected to say so; this docstring was not, so a reader arriving here still
+got the unreachable advice. An exemption is a PR against this repo naming the workflow and
+why its default is safe.
+
+⇒ FORMS THAT ALSO DISCRIMINATE, and are accepted:
+  `github.event_name != 'schedule' && <input expr>`   — short-circuits false on a cron
+  `inputs.X == true`                                  — `null == true` is false, always
 
 ⚠ SCOPE IS DELIBERATELY NARROW: schedule-triggered workflows only. A workflow without a
 cron cannot exhibit this, and demanding the guard everywhere would be noise. A workflow
@@ -55,8 +65,31 @@ _INPUT_REF = re.compile(
     r"\$\{\{[^}]*?\b(?:github\.event\.inputs|inputs)\.([A-Za-z0-9_-]+)[^}]*\}\}"
 )
 # A discriminator: the expression asks WHICH event fired before trusting the input.
+#
+# ⛔ `!=` IS THE SAME QUESTION, AND ONLY `==` WAS ACCEPTED. `github.event_name !=
+# 'schedule' && inputs.dry-run` short-circuits to `false` on a cron without consulting the
+# input at all — identical safety to the accepted form, reported as a fall-through.
 _EVENT_NAME_GUARD = re.compile(
-    r"github\.event_name\s*==\s*'(?:schedule|workflow_dispatch)'"
+    r"github\.event_name\s*(?:==|!=)\s*'(?:schedule|workflow_dispatch)'"
+)
+
+# ⛔ AND THE RULE FLAGGED ITS OWN REFERENCE IMPLEMENTATION. Measured 2026-09-03 against
+# Borduas-Holdings/Blazing-Back, the caller this repo's `reusable-akash-escrow-reaper.yml`
+# ships as the example:
+#
+#     escrow-reaper.yml :: execute: ${{ inputs.execute == true }}
+#
+# There is no `||` in that expression. A schedule supplies nothing, so it evaluates
+# `null == true` → FALSE, on every cron firing, forever. That is not a fall-through to a
+# default — it is the safe value, reached by comparison. Flagging it taught the fleet's
+# most-copied caller that the rule does not understand the shape it recommends by example.
+#
+# ⚠ ONLY AGAINST `true`, AND THE ASYMMETRY IS THE WHOLE POINT. `inputs.X == false` yields
+# TRUE under a schedule, which is exactly the silent-destructive-default this rule exists
+# to catch — so it stays a finding. An absent input can never equal `true`; it can very
+# easily equal `false`.
+_INPUT_EQUALS_TRUE = re.compile(
+    r"\b(?:github\.event\.inputs|inputs)\.[A-Za-z0-9_-]+\s*==\s*(?:true|'true'|\"true\")"
 )
 
 # Exemptions must name the workflow AND why an empty input is harmless there. An
@@ -94,6 +127,11 @@ def offending_expressions(text: str) -> list[str]:
             continue
         if _EVENT_NAME_GUARD.search(line):
             continue  # the author asked which event fired — that is the fix
+        if _INPUT_EQUALS_TRUE.search(line) and "||" not in line:
+            # Comparison, not fallback: `null == true` is false on every cron firing.
+            # ⚠ The `||` exclusion matters — `(inputs.a == true) || inputs.b` puts a
+            # fall-through back on the same line, and the comparison must not launder it.
+            continue
         out.append(line.strip())
     return out
 
