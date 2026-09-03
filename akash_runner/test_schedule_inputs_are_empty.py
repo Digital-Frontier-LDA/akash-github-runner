@@ -183,3 +183,28 @@ def test_the_safe_negation_is_still_accepted():
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ⛔ THE SAFETY IS THE `&&`, NOT THE COMPARISON. With `||` the input branch is
+        # evaluated on every cron firing, so the comparison exempts the very fall-through
+        # it appears to guard.
+        "x: ${{ github.event_name != 'schedule' || (inputs.dry_run || 'false') }}",
+    ],
+)
+def test_a_negation_that_does_not_short_circuit_is_not_a_discriminator(expr):
+    assert chk.offending_expressions(expr) != []
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "a: ${{ github.event_name != 'schedule' && inputs.dry-run }}",
+        "b: ${{ (github.event_name != 'schedule') && inputs.dry-run }}",
+    ],
+)
+def test_the_short_circuiting_negation_is_still_accepted(expr):
+    """Control, including the parenthesised form a reader would plausibly write."""
+    assert chk.offending_expressions(expr) == []

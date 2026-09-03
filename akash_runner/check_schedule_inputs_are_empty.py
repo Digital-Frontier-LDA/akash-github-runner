@@ -82,9 +82,14 @@ _INPUT_REF = re.compile(
 #     == 'workflow_dispatch'   false on a cron → short-circuits before the input
 #     != 'schedule'            false on a cron → short-circuits before the input
 #     != 'workflow_dispatch'   TRUE on a cron → NOT a discriminator
+# ⚠ AND `!= 'schedule'` ONLY WHERE IT SHORT-CIRCUITS. The safety comes entirely from `&&`:
+# `!= 'schedule' && <expr>` never evaluates <expr> on a cron, but
+# `!= 'schedule' || (inputs.X || 'false')` evaluates it every time. Accepting the mere
+# PRESENCE of the comparison exempts the second. Third instance of the same mistake in this
+# regex — widening the shape without constraining how it is used. Raised by Copilot on #65.
 _EVENT_NAME_GUARD = re.compile(
     r"github\.event_name\s*==\s*'(?:schedule|workflow_dispatch)'"
-    r"|github\.event_name\s*!=\s*'schedule'"
+    r"|github\.event_name\s*!=\s*'schedule'\s*\)*\s*&&"
 )
 
 # ⛔ AND THE RULE FLAGGED ITS OWN REFERENCE IMPLEMENTATION. Measured 2026-09-03 against
