@@ -44,9 +44,41 @@ CANONICAL = "Digital-Frontier-LDA/akash-github-runner/.github/workflows/reusable
 # A caller must pin by 40-hex SHA. A branch or tag ref resolves at RUN time, so the closing
 # logic can change under a consumer that changed nothing — the same trap the workflow's own
 # `just-akash-ref` input refuses a default for.
-ADOPTION = re.compile(
-    r"uses:\s*" + re.escape(CANONICAL) + r"@(?P<ref>[A-Za-z0-9._/-]+)",
-)
+def adoption_refs(text: str, canonical: str) -> list[str]:
+    """Every ref at which `text` calls `canonical`, comments stripped from the line.
+
+    ⛔ SHARED BECAUSE TWO COPIES DISAGREED, AND ONE WAS WRONG. This rule and
+    `check_stale_runner_reaper_is_adopted` read the same field — the ref on a `uses:` line
+    — and each had its own parser. The sibling's took everything after `uses:` and
+    partitioned on the first `@`, with no comment strip, so the fleet's own provenance
+    convention broke it:
+
+        uses: <canonical>@fcc385a6…  # akash-github-runner main @ fcc385a6 — …
+                                     └─ captured AS the ref, reported "not a 40-hex commit"
+
+    Dropping the `@` from the note does not rescue it: the partition still ends at the
+    pin's own. So the rule that exists to DRIVE adoption rejected a correct adoption for
+    following the convention — and measurably selected against it. Of the two repos
+    adopting the stale reaper on 2026-09-03, NEITHER records what its pin is; the one repo
+    adopting the escrow reaper, parsed here, does.
+
+    ⚠ One parser, taking the canonical path as an argument, rather than two that can drift.
+    That is this suite's own rule for shared constants, applied to shared behaviour.
+    """
+    refs: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("uses:"):
+            continue
+        # A trailing `#` comment is not part of the ref. Split BEFORE partitioning, or a
+        # note containing an `@` becomes the ref.
+        target = stripped[len("uses:") :].split("#", 1)[0].strip().strip("\"'")
+        path, sep, ref = target.partition("@")
+        if sep and path == canonical:
+            refs.append(ref)
+    return refs
+
+
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
 # The prefix a caller declares it will sweep. `with:` block, so a plain key scan suffices.
@@ -238,7 +270,7 @@ def audit(d: Path) -> tuple[list[str], bool]:
     findings: list[str] = []
     adopters: list[str] = []
     for p, t in texts.items():
-        for m in ADOPTION.finditer(t):
+        for ref in adoption_refs(t, CANONICAL):
             adopters.append(p.name)
             # ⛔ ADOPTED IS NOT THE SAME AS AIMED. The mechanism's own default prefix is
             # correct for exactly one repo; a consumer that stamps something else and does
@@ -269,7 +301,6 @@ def audit(d: Path) -> tuple[list[str], bool]:
                         "forever — or the stamp lives somewhere this check cannot see, and "
                         "the two need reconciling."
                     )
-            ref = m.group("ref")
             if not SHA40.match(ref):
                 findings.append(
                     f"{p.name}: adopts the canonical escrow reaper but pins `@{ref}`, not a "

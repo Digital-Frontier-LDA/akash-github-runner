@@ -76,7 +76,7 @@ from check_dereg_backstop import CREATES_REGISTRATIONS, IMMUTABLE_REF
 # comments vanish for free. This rule reads raw lines on purpose, for the reason the escrow
 # rule records: a YAML parse discards the `uses:` lines the rule depends on when a workflow
 # fails to parse, turning an unparseable file into a silent pass.
-from check_escrow_reaper_is_adopted import _executable
+from check_escrow_reaper_is_adopted import _executable, adoption_refs
 
 CANONICAL = (
     "Digital-Frontier-LDA/akash-github-runner"
@@ -89,19 +89,18 @@ def _adoptions(text: str) -> list[str]:
 
     ⚠ Substring-anchored on the full canonical path rather than the basename. df-cicd
     published a file with the SAME basename and it was deleted (df-cicd#191); a basename
-    match would credit a consumer pointing at it — which is precisely the state Blazing-Back
-    is in today, in a comment.
+    match would credit a consumer pointing at it.
+
+    ⛔ ONE PARSER NOW, AND THE COPY THIS REPLACES WAS THE WRONG ONE. It partitioned the
+    whole line after `uses:` on the first `@` with no comment strip, so the fleet's own
+    provenance convention — `@<sha>  # <repo> main @ <short> — <why>` — made the CAPTURED
+    REF the comment, and the rule reported "not a 40-hex commit" against a 40-hex commit.
+    Measured 2026-09-03: of the two repos adopting this reaper, NEITHER records what its
+    pin is, while the one repo adopting the escrow reaper — parsed by the sibling, which
+    was correct — does. The rule that exists to drive adoption was selecting against
+    recording the pin.
     """
-    refs: list[str] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("uses:"):
-            continue
-        target = stripped[len("uses:") :].strip().strip("\"'")
-        path, _, ref = target.partition("@")
-        if path == CANONICAL:
-            refs.append(ref)
-    return refs
+    return adoption_refs(text, CANONICAL)
 
 
 def _is_the_publisher(d: Path) -> bool:
