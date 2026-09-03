@@ -158,3 +158,28 @@ def test_a_comparison_is_not_a_fall_through(expr):
 )
 def test_the_comparison_allowance_does_not_open_a_hole(expr):
     assert chk.offending_expressions(expr) != []
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # ⛔ TRUE ON A SCHEDULED RUN, so it discriminates nothing on the path that matters.
+        # `!= 'workflow_dispatch'` reads like the mirror of `!= 'schedule'` and is its
+        # opposite: the guard passes on the cron firing and the `||` default still wins.
+        # An exemption that fires on the cron path is worse than the finding it silences.
+        "x: ${{ github.event_name != 'workflow_dispatch' && (inputs.dry_run || 'false') }}",
+        "y: ${{ github.event_name != 'push' && (inputs.dry_run || 'false') }}",
+    ],
+)
+def test_a_negation_that_is_true_on_a_cron_is_not_a_discriminator(expr):
+    assert chk.offending_expressions(expr) != []
+
+
+def test_the_safe_negation_is_still_accepted():
+    """Control: restricting `!=` must not have removed the form it was widened for."""
+    assert (
+        chk.offending_expressions(
+            "d: ${{ github.event_name != 'schedule' && inputs.dry-run }}"
+        )
+        == []
+    )

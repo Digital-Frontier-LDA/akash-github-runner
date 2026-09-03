@@ -69,8 +69,22 @@ _INPUT_REF = re.compile(
 # ⛔ `!=` IS THE SAME QUESTION, AND ONLY `==` WAS ACCEPTED. `github.event_name !=
 # 'schedule' && inputs.dry-run` short-circuits to `false` on a cron without consulting the
 # input at all — identical safety to the accepted form, reported as a fall-through.
+#
+# ⚠ BUT ONLY `!= 'schedule'`, AND THE FIRST VERSION OF THIS LINE GOT IT WRONG. Widening to
+# `(?:==|!=)\s*'(?:schedule|workflow_dispatch)'` also accepts `!= 'workflow_dispatch'`,
+# which is TRUE on a scheduled run — so `github.event_name != 'workflow_dispatch' &&
+# (inputs.X || 'false')` would be exempted while falling through on exactly the path this
+# rule exists to catch. An exemption that fires on the cron path is worse than the finding
+# it silences. Raised by Copilot on #65.
+#
+# ⇒ Safe forms, and why each is safe on a SCHEDULE firing:
+#     == 'schedule'            selects the safe branch explicitly
+#     == 'workflow_dispatch'   false on a cron → short-circuits before the input
+#     != 'schedule'            false on a cron → short-circuits before the input
+#     != 'workflow_dispatch'   TRUE on a cron → NOT a discriminator
 _EVENT_NAME_GUARD = re.compile(
-    r"github\.event_name\s*(?:==|!=)\s*'(?:schedule|workflow_dispatch)'"
+    r"github\.event_name\s*==\s*'(?:schedule|workflow_dispatch)'"
+    r"|github\.event_name\s*!=\s*'schedule'"
 )
 
 # ⛔ AND THE RULE FLAGGED ITS OWN REFERENCE IMPLEMENTATION. Measured 2026-09-03 against
