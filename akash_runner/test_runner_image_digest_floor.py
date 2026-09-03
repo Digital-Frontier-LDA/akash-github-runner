@@ -260,3 +260,25 @@ def test_an_unfloored_publisher_is_still_held_to_the_digest_rule() -> None:
     the same tag."""
     floating = mod.findings(f"{_AKASH}:latest")
     assert floating and "floating" in floating[0]
+
+
+def test_a_similarly_named_publisher_does_not_inherit_the_floor() -> None:
+    """⛔ `notmyoung34/github-runner` is a different publisher.
+
+    A suffix match applies one publisher's binary-version floor to another's numbering —
+    reintroducing, for them, the precise false "below supported floor" this change exists
+    to remove. Raised independently by Copilot and CodeRabbit on #66.
+    """
+    result = mod.findings(f"notmyoung34/github-runner:2.300.0{_DIGEST}")
+    assert result
+    assert "below supported floor" not in result[0], result[0]
+    assert "no verifiable version tag" in result[0], result[0]
+
+
+def test_a_registry_port_does_not_strip_the_floor() -> None:
+    """A colon is not always a tag separator: `localhost:5000/myoung34/github-runner` has
+    two, and splitting on the first yields `localhost`. The image is correctly pinned and
+    correctly named, and would have silently lost its floor."""
+    assert mod.findings(f"localhost:5000/{_MYOUNG34}:2.336.0-ubuntu-jammy{_DIGEST}") == []
+    below = mod.findings(f"localhost:5000/{_MYOUNG34}:2.300.0-ubuntu-jammy{_DIGEST}")
+    assert below and "below supported floor" in below[0], below

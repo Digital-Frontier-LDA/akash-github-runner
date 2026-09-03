@@ -64,11 +64,32 @@ _FLOORS: dict[str, tuple[int, int, int]] = {
 }
 
 
+def _repo_name(image: str) -> str:
+    """The repository part of an image reference, without registry port or tag confusion.
+
+    ⛔ A COLON IS NOT ALWAYS A TAG. `localhost:5000/myoung34/github-runner:2.336.0` has two,
+    and splitting on the FIRST one yields `localhost` — which matches no floor, so a
+    correctly-pinned image behind a registry port would silently lose its floor. A tag
+    separator is only the colon that comes AFTER the last `/`. Raised by Copilot on #66.
+    """
+    ref = image.split("@", 1)[0]
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    return ref[:colon] if colon > slash else ref
+
+
 def _floor_for(image: str) -> tuple[int, int, int] | None:
-    """The floor for this image's version series, or None if it has no comparable one."""
-    name = image.split("@", 1)[0].split(":", 1)[0]
+    """The floor for this image's version series, or None if it has no comparable one.
+
+    ⛔ MATCHED ON A PATH BOUNDARY, NOT A SUFFIX. `name.endswith(repo)` also matches
+    `notmyoung34/github-runner`, applying one publisher's floor to a different publisher —
+    which reintroduces exactly the false below-floor finding this change exists to remove,
+    for anyone whose name merely ends in a configured one. Raised by Copilot and CodeRabbit
+    on #66, independently.
+    """
+    name = _repo_name(image)
     for repo, floor in _FLOORS.items():
-        if name == repo or name.endswith("/" + repo) or name.endswith(repo):
+        if name == repo or name.endswith("/" + repo):
             return floor
     return None
 # Two reference forms exist in this fleet and BOTH must match:
