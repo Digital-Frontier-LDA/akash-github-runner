@@ -97,6 +97,93 @@ MECHANISM_INVOCATION = re.compile(r"just_akash\.cleanup_stale")
 # `balance`, `list` and `tag` read or annotate and leak nothing.
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
 
+# ⛔ THE LITERAL IS NOT HOW EVERY REPO SPELLS IT, AND THE MISS IS SILENT AND TOTAL.
+# Measured 2026-09-03: `Borduas-Holdings/blazing` held 85 active deployments and this rule
+# reported "creates no Akash deployments — nothing to leak". It installs the CLI into a
+# variable and invokes that:
+#
+#     akash-runner.yml:442   JA="uvx --from git+https://…/just-akash@main just-akash"
+#     akash-runner.yml:463   $JA deploy --sdl /tmp/sdl.yaml --bid-wait 60 …
+#
+# ⚠ AND THE CONSEQUENCE OUTLIVED THE ADOPTION. blazing adopted the reaper the same day;
+# deleting that adoption again produced the IDENTICAL verdict, rc=0. So the repo this rule
+# most concerns had no guard either before or after — "a ratified mechanism with zero
+# executions", inside the guard written to prevent it.
+#
+# ⛔ WHY NOT A BARE `\$VAR deploy`. That matches `$KUBECTL deploy` and `$HELM deploy`, and
+# this rule is ENFORCING: a repo deploying something that is not Akash would be pulled into
+# scope and failed for not adopting an Akash escrow reaper. So the variable must be shown to
+# HOLD the CLI first. Two statements, and both must be present in the same workflow.
+_HOLDS_CLI = re.compile(r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)=\(?[^\n]*\bjust-akash\b")
+
+
+def _invokes(name: str) -> re.Pattern[str]:
+    """`$JA deploy`, `${JA} deploy`, and the array form this fleet also writes."""
+    return re.compile(
+        r"\$\{?" + re.escape(name) + r"\}?\s+deploy\b"
+        r"|\"\$\{" + re.escape(name) + r"\[@\]\}\"\s+deploy\b"
+    )
+
+
+def _assigns(name: str) -> re.Pattern[str]:
+    """Any assignment to `name`, whatever it holds."""
+    return re.compile(r"(?m)^\s*" + re.escape(name) + r"=")
+
+
+def _cli_var_deploys(text: str) -> bool:
+    """A variable that holds the CLI *at the point it deploys*.
+
+    ⛔ NEAREST PRECEDING ASSIGNMENT, NOT "ASSIGNED SOMEWHERE". Matching an Akash
+    assignment anywhere plus a later `$VAR deploy` anywhere reports creation for:
+
+        JA="uvx --from git+…/just-akash@main just-akash"
+        JA=/usr/local/bin/kubectl
+        $JA deploy -f manifest.yaml            # not Akash
+
+    which fails a repo, under an ENFORCING rule, for a deployment it never made. Raised by
+    CodeRabbit on #63. The scan is deliberately shallow — last assignment wins, no branch
+    or subshell analysis — because the alternative is a shell parser, and a rule nobody can
+    read is a rule that gets exempted. Shallow in the SAFE direction: a reassignment we
+    misread drops the repo OUT of scope, which is the verdict this rule already gives when
+    it cannot tell.
+    """
+    def _line_at(pos: int) -> str:
+        start = text.rfind("\n", 0, pos) + 1
+        end = text.find("\n", pos)
+        return text[start : end if end != -1 else len(text)]
+
+    for name in {m.group("name") for m in _HOLDS_CLI.finditer(text)}:
+        assignments = list(_assigns(name).finditer(text))
+        for use in _invokes(name).finditer(text):
+            preceding = [a for a in assignments if a.start() < use.start()]
+            if preceding and "just-akash" in _line_at(preceding[-1].start()):
+                return True
+    return False
+
+
+# ⛔ DELEGATED CREATION IS STILL CREATION. A repo whose only deployments come from
+# `runner-pool.yml` spends real escrow and leaks it when the pool's own teardown does not
+# run — which is the case this reaper is the backstop for. Measured: no repo in the fleet
+# enters scope by this route ALONE today (blazing also matches the variable form,
+# just-akash also matches the literal), so it widens the rule's reasoning without widening
+# today's population.
+#
+# ⚠ ANCHORED ON THE AKASH POOL, NOT ON A BASENAME. `runner-pool.yml` is not a reserved
+# name: `uses: acme/other-tool/.github/workflows/runner-pool.yml@<sha>` would put a repo
+# with no Akash involvement into an ENFORCING rule's scope and fail it for not adopting an
+# Akash reaper. That is the same false-positive class the variable form above is careful
+# about, and the first version of this line was not. Raised by CodeRabbit on #63.
+_DELEGATES_CREATION = re.compile(
+    r"uses:\s*Digital-Frontier-LDA/just-akash/\.github/workflows/runner-pool\.yml@"
+)
+
+
+def _creates(text: str) -> bool:
+    """True if this workflow creates Akash deployments, however it spells it."""
+    if CREATES.search(text) or _DELEGATES_CREATION.search(text):
+        return True
+    return _cli_var_deploys(text)
+
 
 def _executable(text: str) -> str:
     """The workflow with COMMENT LINES STRIPPED.
@@ -154,7 +241,7 @@ def audit(d: Path) -> tuple[list[str], bool]:
         return ([f"no workflow files under {d} — cannot judge, refusing to pass"], True)
 
     texts = {p: _executable(p.read_text(encoding="utf-8", errors="replace")) for p in files}
-    creators = [p.name for p, t in texts.items() if CREATES.search(t)]
+    creators = [p.name for p, t in texts.items() if _creates(t)]
     if not creators:
         return ([], False)
 
