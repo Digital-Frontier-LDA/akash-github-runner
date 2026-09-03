@@ -64,6 +64,68 @@ def test_a_registrar_that_adopts_at_a_sha_passes(tmp_path):
     assert "adopts" in p.stdout
 
 
+def test_the_fleets_own_provenance_comment_does_not_break_adoption(tmp_path):
+    """⛔ THE PIN NOTE IS THE CONVENTION, AND THIS RULE USED TO REJECT IT.
+
+    Every `uses:` pin in this fleet carries `# <repo> main @ <short> — <why>`, and
+    consumers assert it: Borduas-Holdings/blazing has a test requiring a version comment
+    on every 40-hex pin. The parser here partitioned the whole line on the first `@` with
+    no comment strip, so the note — which itself contains an `@` — BECAME the ref, and the
+    rule reported "not a 40-hex commit" against a 40-hex commit.
+
+    ⚠ MEASURED CONSEQUENCE, not a hypothetical: on 2026-09-03 neither repo adopting this
+    reaper recorded what its pin is, while the one repo adopting the escrow reaper — whose
+    parser was correct — did. A rule that drives adoption was selecting against the note.
+    """
+    adopts_with_note = (
+        "on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
+        f"    uses: {CANONICAL}@{SHA}  "
+        "# akash-github-runner main @ deadbeef — why this pin\n"
+    )
+    p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": adopts_with_note})
+    assert p.returncode == 0, p.stdout
+    assert "adopts" in p.stdout
+    assert "not a 40-hex" not in p.stdout
+
+
+def test_a_quoted_uses_is_still_adoption(tmp_path):
+    """YAML permits quoting the value; the ref is the same object either way."""
+    quoted = (
+        "on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
+        f"    uses: '{CANONICAL}@{SHA}'\n"
+    )
+    p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": quoted})
+    assert p.returncode == 0, p.stdout
+
+
+def test_a_branch_ref_is_still_rejected_when_it_carries_a_note(tmp_path):
+    """Anti-vacuity for the comment strip: stripping the note must not also strip the
+    rule's ability to see that the ref is a branch. Otherwise the fix trades a false
+    negative for a false positive on the one property that matters most here — a moving
+    ref changes what gets DELETED under a consumer that changed nothing.
+    """
+    branch_with_note = (
+        "on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
+        f"    uses: {CANONICAL}@main  # akash-github-runner main @ deadbeef\n"
+    )
+    p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": branch_with_note})
+    assert p.returncode == 1, p.stdout
+    assert "40-hex" in p.stdout
+
+
+def test_both_adoption_rules_use_one_parser():
+    """The two rules read the SAME field on the same kind of line. Two copies drifted —
+    one stripped comments, one did not — and this suite's own convention for that is to
+    import rather than re-type. Asserted rather than trusted, because the drift was
+    invisible until a consumer wrote the note the fleet asks for."""
+    import check_escrow_reaper_is_adopted as escrow
+    import check_stale_runner_reaper_is_adopted as stale
+
+    assert stale._adoptions.__module__ == "check_stale_runner_reaper_is_adopted"
+    line = f"    uses: {CANONICAL}@{SHA}  # note @ with an at-sign"
+    assert stale._adoptions(line) == escrow.adoption_refs(line, CANONICAL) == [SHA]
+
+
 def test_a_repo_that_registers_nothing_is_not_applicable(tmp_path):
     p = _run(
         tmp_path,
