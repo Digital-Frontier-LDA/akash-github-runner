@@ -63,8 +63,6 @@ MECHANISM_INVOCATION = re.compile(r"just_akash\.cleanup_stale")
 
 # Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
 # `balance`, `list` and `tag` read or annotate and leak nothing.
-# Evidence that a repo creates deployments at all. Deliberately the CREATE verbs only:
-# `balance`, `list` and `tag` read or annotate and leak nothing.
 CREATES = re.compile(r"just-akash\s+deploy\b|just_akash\.deploy\b|deploy_custom_sdl\b")
 
 # ⛔ THE LITERAL IS NOT HOW EVERY REPO SPELLS IT, AND THE MISS IS SILENT AND TOTAL.
@@ -95,20 +93,64 @@ def _invokes(name: str) -> re.Pattern[str]:
     )
 
 
+def _assigns(name: str) -> re.Pattern[str]:
+    """Any assignment to `name`, whatever it holds."""
+    return re.compile(r"(?m)^\s*" + re.escape(name) + r"=")
+
+
+def _cli_var_deploys(text: str) -> bool:
+    """A variable that holds the CLI *at the point it deploys*.
+
+    ⛔ NEAREST PRECEDING ASSIGNMENT, NOT "ASSIGNED SOMEWHERE". Matching an Akash
+    assignment anywhere plus a later `$VAR deploy` anywhere reports creation for:
+
+        JA="uvx --from git+…/just-akash@main just-akash"
+        JA=/usr/local/bin/kubectl
+        $JA deploy -f manifest.yaml            # not Akash
+
+    which fails a repo, under an ENFORCING rule, for a deployment it never made. Raised by
+    CodeRabbit on #63. The scan is deliberately shallow — last assignment wins, no branch
+    or subshell analysis — because the alternative is a shell parser, and a rule nobody can
+    read is a rule that gets exempted. Shallow in the SAFE direction: a reassignment we
+    misread drops the repo OUT of scope, which is the verdict this rule already gives when
+    it cannot tell.
+    """
+    def _line_at(pos: int) -> str:
+        start = text.rfind("\n", 0, pos) + 1
+        end = text.find("\n", pos)
+        return text[start : end if end != -1 else len(text)]
+
+    for name in {m.group("name") for m in _HOLDS_CLI.finditer(text)}:
+        assignments = list(_assigns(name).finditer(text))
+        for use in _invokes(name).finditer(text):
+            preceding = [a for a in assignments if a.start() < use.start()]
+            if preceding and "just-akash" in _line_at(preceding[-1].start()):
+                return True
+    return False
+
+
 # ⛔ DELEGATED CREATION IS STILL CREATION. A repo whose only deployments come from
 # `runner-pool.yml` spends real escrow and leaks it when the pool's own teardown does not
 # run — which is the case this reaper is the backstop for. Measured: no repo in the fleet
 # enters scope by this route ALONE today (blazing also matches the variable form,
 # just-akash also matches the literal), so it widens the rule's reasoning without widening
 # today's population.
-_DELEGATES_CREATION = re.compile(r"uses:\s*\S+/runner-pool\.yml@")
+#
+# ⚠ ANCHORED ON THE AKASH POOL, NOT ON A BASENAME. `runner-pool.yml` is not a reserved
+# name: `uses: acme/other-tool/.github/workflows/runner-pool.yml@<sha>` would put a repo
+# with no Akash involvement into an ENFORCING rule's scope and fail it for not adopting an
+# Akash reaper. That is the same false-positive class the variable form above is careful
+# about, and the first version of this line was not. Raised by CodeRabbit on #63.
+_DELEGATES_CREATION = re.compile(
+    r"uses:\s*Digital-Frontier-LDA/just-akash/\.github/workflows/runner-pool\.yml@"
+)
 
 
 def _creates(text: str) -> bool:
     """True if this workflow creates Akash deployments, however it spells it."""
     if CREATES.search(text) or _DELEGATES_CREATION.search(text):
         return True
-    return any(_invokes(m.group("name")).search(text) for m in _HOLDS_CLI.finditer(text))
+    return _cli_var_deploys(text)
 
 
 def _executable(text: str) -> str:

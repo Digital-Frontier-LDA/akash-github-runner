@@ -132,6 +132,57 @@ def test_a_commented_out_deploy_is_not_in_scope(tmp_path):
     assert not _in_scope(_run(tmp_path))
 
 
+def test_a_foreign_runner_pool_is_not_in_scope(tmp_path):
+    """`runner-pool.yml` is not a reserved name.
+
+    A repo calling `acme/other-tool/.github/workflows/runner-pool.yml` has no Akash
+    involvement, and matching on the basename would fail it — under an ENFORCING rule —
+    for not adopting an Akash reaper. Raised by CodeRabbit on #63; the same false-positive
+    class the variable form is careful about, applied here too.
+    """
+    _wf(
+        tmp_path,
+        "a.yml",
+        "jobs:\n  p:\n    uses: acme/other-tool/.github/workflows/runner-pool.yml@"
+        + "c" * 40
+        + "\n",
+    )
+    assert not _in_scope(_run(tmp_path))
+
+
+def test_a_variable_reassigned_away_from_the_cli_is_not_in_scope(tmp_path):
+    """Holding the CLI once is not holding it when it deploys.
+
+    An Akash assignment anywhere plus a later `$VAR deploy` anywhere reports creation for
+    a block that reassigns the variable in between — failing a repo for a deployment it
+    never made. The nearest PRECEDING assignment is what counts. Raised by CodeRabbit on
+    #63.
+    """
+    _wf(
+        tmp_path,
+        "a.yml",
+        "jobs:\n  x:\n    steps:\n      - run: |\n"
+        '          JA="uvx --from git+https://x/just-akash@main just-akash"\n'
+        "          JA=/usr/local/bin/kubectl\n"
+        "          $JA deploy -f manifest.yaml\n",
+    )
+    assert not _in_scope(_run(tmp_path))
+
+
+def test_a_variable_reassigned_TO_the_cli_is_in_scope(tmp_path):
+    """The control for the test above — otherwise "nearest preceding assignment" could be
+    implemented as "never in scope" and both would pass."""
+    _wf(
+        tmp_path,
+        "a.yml",
+        "jobs:\n  x:\n    steps:\n      - run: |\n"
+        "          JA=/usr/local/bin/kubectl\n"
+        '          JA="uvx --from git+https://x/just-akash@main just-akash"\n'
+        "          $JA deploy --sdl /tmp/sdl.yaml\n",
+    )
+    assert _in_scope(_run(tmp_path))
+
+
 # ── and the verdict, once in scope ───────────────────────────────────────────
 
 def test_a_creator_without_an_adoption_fails(tmp_path):
