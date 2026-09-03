@@ -30,6 +30,68 @@ from pathlib import Path
 import yaml
 
 SUPPORTED_FLOOR = (2, 336, 0)
+
+# ⛔ ONE FLOOR, TWO UNRELATED VERSION SERIES — and the floor belonged to only one of them.
+# `SUPPORTED_FLOOR` is a GitHub Actions RUNNER BINARY version, which is what myoung34's tag
+# encodes. The other image in this fleet numbers its own IMAGE RELEASES and does not put
+# the binary version in the reference at all:
+#
+#   myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:8eeec3e8…   runner binary  2.336.0
+#   ghcr.io/akash-network/github-runner:0.0.3@sha256:7509763a…     image release  0.0.3
+#                                                                  binary inside  2.334.0
+#                                                                  (measured with crane;
+#                                                                   nowhere in the tag)
+#
+# Comparing `0.0.3` to `2.336.0` is comparing an image release to a binary version. The
+# consequence is worse than a wrong number: today the akash-network image is referenced
+# TAGLESS, which this rule reports honestly as "a digest but no verifiable version tag" —
+# a TRUE finding. Add the correct tag and it becomes "below supported floor 2.336.0
+# (version 0.0.3)", a FALSE one, permanently, on every run. A consumer acting on it would
+# hunt for a `2.336.0` tag of an image whose tags are `0.0.x`.
+#
+# ⚠ THIS IS THE THIRD TIME THIS RULE HAS BEEN KEYED TO ONE REPO'S TAG SHAPE. The first two
+# are recorded above: a required literal `:` before the digest, and the same "a tag is
+# always present" assumption encoded in three places, each of which made the rule report
+# NOT APPLICABLE on the very repo whose deprecated digest motivated it. The fix each time
+# was to stop assuming every publisher numbers things the same way.
+#
+# ⇒ A floor is meaningful only against the series it came from. An image whose reference
+# cannot express currency gets NO floor and keeps the honest "not verifiable" verdict —
+# which is what the tagless case already returns, so a consumer that adds the correct tag
+# is not punished for it.
+_FLOORS: dict[str, tuple[int, int, int]] = {
+    "myoung34/github-runner": SUPPORTED_FLOOR,
+}
+
+
+def _repo_name(image: str) -> str:
+    """The repository part of an image reference, without registry port or tag confusion.
+
+    ⛔ A COLON IS NOT ALWAYS A TAG. `localhost:5000/myoung34/github-runner:2.336.0` has two,
+    and splitting on the FIRST one yields `localhost` — which matches no floor, so a
+    correctly-pinned image behind a registry port would silently lose its floor. A tag
+    separator is only the colon that comes AFTER the last `/`. Raised by Copilot on #66.
+    """
+    ref = image.split("@", 1)[0]
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    return ref[:colon] if colon > slash else ref
+
+
+def _floor_for(image: str) -> tuple[int, int, int] | None:
+    """The floor for this image's version series, or None if it has no comparable one.
+
+    ⛔ MATCHED ON A PATH BOUNDARY, NOT A SUFFIX. `name.endswith(repo)` also matches
+    `notmyoung34/github-runner`, applying one publisher's floor to a different publisher —
+    which reintroduces exactly the false below-floor finding this change exists to remove,
+    for anyone whose name merely ends in a configured one. Raised by Copilot and CodeRabbit
+    on #66, independently.
+    """
+    name = _repo_name(image)
+    for repo, floor in _FLOORS.items():
+        if name == repo or name.endswith("/" + repo):
+            return floor
+    return None
 # Two reference forms exist in this fleet and BOTH must match:
 #   name:TAG@DIGEST   myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:8eeec3e8...   (Blazing-Back)
 #   name@DIGEST       ghcr.io/akash-network/github-runner@sha256:7509763a...           (just-akash)
@@ -132,13 +194,18 @@ def findings(document: dict | str) -> list[str]:
                 f"runner image {image!r} is floating; pin it with @sha256:<digest>"
             )
             continue
-        if version is None:
+        floor_for_image = _floor_for(image)
+        if version is None or floor_for_image is None:
+            # Two different reasons, one honest verdict: either the reference carries no
+            # version, or it carries one from a series this rule has no floor for. Both
+            # mean currency was NOT checked, and saying so is the point — claiming PASS
+            # would assert a check that did not happen.
             out.append(
                 f"runner image {image!r} has a digest but no verifiable version tag"
             )
             continue
-        if version < SUPPORTED_FLOOR:
-            floor = ".".join(map(str, SUPPORTED_FLOOR))
+        if version < floor_for_image:
+            floor = ".".join(map(str, floor_for_image))
             out.append(
                 f"runner image {image!r} is below supported floor "
                 f"{floor} (version {'.'.join(map(str, version))})"

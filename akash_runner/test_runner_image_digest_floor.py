@@ -205,3 +205,80 @@ def test_a_bare_reference_at_the_end_of_an_interior_line_is_still_seen() -> None
 
 def test_a_longer_image_name_ending_in_the_runner_name_is_not_a_match() -> None:
     assert mod._runner_images("github-runner-extra:1.0") == []
+
+
+# ── two publishers, two version series, one floor that belonged to one of them ──
+
+_DIGEST = "@sha256:" + "a" * 64
+_AKASH = "ghcr.io/akash-network/github-runner"
+_MYOUNG34 = "myoung34/github-runner"
+
+
+def test_the_floor_still_applies_to_the_series_it_came_from() -> None:
+    """Anti-vacuity for everything below: making the floor per-repository must not have
+    made it per-nobody. 2.336.0 is a GitHub Actions runner BINARY version and myoung34's
+    tag encodes exactly that."""
+    assert mod.findings(f"{_MYOUNG34}:2.336.0-ubuntu-jammy{_DIGEST}") == []
+    below = mod.findings(f"{_MYOUNG34}:2.300.0-ubuntu-jammy{_DIGEST}")
+    assert below and "below supported floor" in below[0]
+
+
+def test_a_correct_tag_on_the_other_publisher_is_not_a_false_below_floor() -> None:
+    """⛔ THE DEFECT. `ghcr.io/akash-network/github-runner` numbers its own IMAGE RELEASES
+    — `0.0.3`, `0.0.3-20260810` — and does not put the runner binary version in the
+    reference at all (it is 2.334.0, measured with crane). Comparing `0.0.3` to `2.336.0`
+    compares an image release to a binary version.
+
+    The consequence was worse than a wrong number. Tagless, the rule says "a digest but no
+    verifiable version tag" — TRUE. Add the correct tag and it said "below supported floor
+    2.336.0 (version 0.0.3)" — FALSE, permanently, on every run, sending a consumer to hunt
+    for a `2.336.0` tag of an image whose tags are `0.0.x`. Recording the release a pin
+    refers to is good practice and the rule punished it.
+    """
+    result = mod.findings(f"{_AKASH}:0.0.3{_DIGEST}")
+    assert result, "a reference whose currency cannot be checked must not read as a pass"
+    assert "below supported floor" not in result[0], result[0]
+    assert "no verifiable version tag" in result[0], result[0]
+
+
+def test_the_tagless_reference_is_unchanged() -> None:
+    """The honest verdict for that image was already correct and must stay identical, so
+    adding the tag neither improves nor worsens the finding — which is the point: the tag
+    documents the release for a human without the rule pretending to have checked it."""
+    tagless = mod.findings(f"{_AKASH}{_DIGEST}")
+    tagged = mod.findings(f"{_AKASH}:0.0.3{_DIGEST}")
+    assert tagless and tagged
+    assert "no verifiable version tag" in tagless[0]
+    assert tagless[0].replace(_AKASH + _DIGEST, "") == tagged[0].replace(
+        _AKASH + ":0.0.3" + _DIGEST, ""
+    )
+
+
+def test_an_unfloored_publisher_is_still_held_to_the_digest_rule() -> None:
+    """Having no floor is not having no rules. `:latest` is still floating, and floating is
+    the incident this whole rule exists for — provider caches served different layers for
+    the same tag."""
+    floating = mod.findings(f"{_AKASH}:latest")
+    assert floating and "floating" in floating[0]
+
+
+def test_a_similarly_named_publisher_does_not_inherit_the_floor() -> None:
+    """⛔ `notmyoung34/github-runner` is a different publisher.
+
+    A suffix match applies one publisher's binary-version floor to another's numbering —
+    reintroducing, for them, the precise false "below supported floor" this change exists
+    to remove. Raised independently by Copilot and CodeRabbit on #66.
+    """
+    result = mod.findings(f"notmyoung34/github-runner:2.300.0{_DIGEST}")
+    assert result
+    assert "below supported floor" not in result[0], result[0]
+    assert "no verifiable version tag" in result[0], result[0]
+
+
+def test_a_registry_port_does_not_strip_the_floor() -> None:
+    """A colon is not always a tag separator: `localhost:5000/myoung34/github-runner` has
+    two, and splitting on the first yields `localhost`. The image is correctly pinned and
+    correctly named, and would have silently lost its floor."""
+    assert mod.findings(f"localhost:5000/{_MYOUNG34}:2.336.0-ubuntu-jammy{_DIGEST}") == []
+    below = mod.findings(f"localhost:5000/{_MYOUNG34}:2.300.0-ubuntu-jammy{_DIGEST}")
+    assert below and "below supported floor" in below[0], below
