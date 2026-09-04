@@ -226,8 +226,14 @@ def test_the_floor_still_applies_to_the_series_it_came_from() -> None:
 def test_a_correct_tag_on_the_other_publisher_is_not_a_false_below_floor() -> None:
     """⛔ THE DEFECT. `ghcr.io/akash-network/github-runner` numbers its own IMAGE RELEASES
     — `0.0.3`, `0.0.3-20260810` — and does not put the runner binary version in the
-    reference at all (it is 2.334.0, measured with crane). Comparing `0.0.3` to `2.336.0`
+    reference at all (it is 2.336.0 — read from the pinned digest's amd64 config blob, whose
+    build history carries `GH_RUNNER_VERSION=2.336.0`). Comparing `0.0.3` to `2.336.0`
     compares an image release to a binary version.
+
+    ⚠ This docstring said 2.334.0 until 2026-09-04. That version belonged to the digest
+    sha256:7509763a… REPLACED, and was carried forward onto its successor. The correction
+    sharpens the point: at 2.336.0 the image is EXACTLY AT the floor, so a correct tag would
+    produce a finding that is the opposite of the truth, not merely mis-derived.
 
     The consequence was worse than a wrong number. Tagless, the rule says "a digest but no
     verifiable version tag" — TRUE. Add the correct tag and it said "below supported floor
