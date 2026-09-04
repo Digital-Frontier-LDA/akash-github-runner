@@ -38,9 +38,26 @@ SUPPORTED_FLOOR = (2, 336, 0)
 #
 #   myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:8eeec3e8…   runner binary  2.336.0
 #   ghcr.io/akash-network/github-runner:0.0.3@sha256:7509763a…     image release  0.0.3
-#                                                                  binary inside  2.334.0
-#                                                                  (measured with crane;
-#                                                                   nowhere in the tag)
+#                                                                  binary inside  2.336.0
+#                                                                  (nowhere in the tag)
+#
+# ⚠ THAT BINARY VERSION WAS WRONG HERE UNTIL 2026-09-04, AND THE ERROR FLATTERED THE RULE.
+# This block said 2.334.0 "measured with crane". 2.334.0 belonged to the digest this one
+# REPLACED — sha256:030ae11a, the deprecated runner GitHub refuses to dispatch to — and was
+# carried forward onto its successor. Re-measured from the registry, no crane needed:
+#
+#   TOK=$(curl -s "https://ghcr.io/token?scope=repository:akash-network/github-runner:pull\
+#         &service=ghcr.io" | jq -r .token)
+#   # resolve sha256:7509763a… -> its linux/amd64 manifest -> that manifest's config blob
+#   curl -sL -H "Authorization: Bearer $TOK" \
+#        "https://ghcr.io/v2/akash-network/github-runner/blobs/<config digest>" \
+#     | jq -r '.history[].created_by' | grep -o 'GH_RUNNER_VERSION=[0-9.]*'
+#   # -> GH_RUNNER_VERSION=2.336.0   (labels.revision 9eb893eb4bfe9950808a601bd780decad8fe60b6)
+#
+# ⛔ AND IT MAKES THE ARGUMENT BELOW STRONGER, NOT WEAKER. At 2.334.0 the image was one
+# release BEHIND the floor, so "below supported floor" was at least directionally right by
+# accident. At 2.336.0 it is EXACTLY AT the floor — so the finding a correct tag would
+# produce is not merely mis-derived, it is the opposite of the truth.
 #
 # Comparing `0.0.3` to `2.336.0` is comparing an image release to a binary version. The
 # consequence is worse than a wrong number: today the akash-network image is referenced
