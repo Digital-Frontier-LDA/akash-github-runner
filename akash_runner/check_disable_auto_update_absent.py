@@ -23,6 +23,20 @@ code change, so a static version check passes and then rots. Auto-update is the 
 mechanism that survives the NEXT deprecation. A digest pin still fixes a known starting
 image; it must not also freeze the runner there.
 
+⚠ THAT RATIONALE IS TRUE AND INCOMPLETE — SEE `check_auto_update_pump_has_a_bound`.
+It weighs the deprecated-runner pump and mandates auto-update, but auto-update has a pump
+of its own. Measured on borduas-pool deployment 1788575148893 (2026-09-05): a HEALTHY
+2.336.0 runner, already "Listening for Jobs" and carrying NO deprecation message, took the
+mandated 2.337.0 update, exited, failed to deregister, and left
+
+    Could not load file or assembly 'System.Linq.Parallel, Version=8.0.0.0'
+
+i.e. register -> die -> restart -> re-register, the SAME signature as the pump above, from
+the opposite cause. This rule is still right; it is simply half of the control. The
+companion rule requires the shared precondition — an unbounded restart of a container that
+can register but never work — to be broken. Do not read this docstring as saying
+auto-update is free.
+
 ⚠ PRESENCE, NOT VALUE — AND THAT IS THE WHOLE RULE. Measured in Blazing-Back run
 31614227678: with `DISABLE_AUTO_UPDATE=false` the container STILL printed "Disable auto
 update option is enabled" and stayed on the deprecated 2.334.0. The upstream entrypoint

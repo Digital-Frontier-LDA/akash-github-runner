@@ -227,6 +227,7 @@ runs:
           check_conformance_pin_agrees_with_checker_ref.py
           check_listing_failure_is_loud.py
           check_stale_runner_reaper_is_adopted.py
+          check_auto_update_pump_has_a_bound.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -376,6 +377,8 @@ runs:
           # akash_runner/test_every_rule_has_a_call_site.py.
           advisory check_listing_failure_is_loud.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_stale_runner_reaper_is_adopted.py --workflows-dir "$WORKFLOWS_DIR"
+          # Bounds the pump the auto-update mandate creates; rationale in the rule docstring.
+          advisory check_auto_update_pump_has_a_bound.py --workflows-dir "$WORKFLOWS_DIR"
         else
           # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
           # reports nothing is indistinguishable from a rule that passed. `::notice` is
