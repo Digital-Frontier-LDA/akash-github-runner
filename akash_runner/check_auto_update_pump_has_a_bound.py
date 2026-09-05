@@ -178,9 +178,29 @@ def _has_bound(lines: list[str]) -> str | None:
 
 
 def check(workflows_dir: Path) -> tuple[list[Finding], list[Path], list[str]]:
+    """Findings are PER RUNNER CONTAINER, not per repo.
+
+    ⛔ THE FIRST VERSION SUPPRESSED EVERY FINDING WHEN ANY FILE HAD A BOUND —
+    `if not in_scope or bounds: return []`. One bounded file silenced every unbounded runner
+    container beside it, so a repo could add a gate to one workflow and go clean while the
+    other still pumped. Reported independently by Copilot and CodeRabbit on #69, and the
+    blast radius this rule itself printed names the case: **Blazing-Back FAIL (2 —
+    akash-runner.yml AND runner-time-to-ready.yml)**. Bound either one and the other vanished.
+
+    ⚠ THE ORIGINAL INSTINCT WAS NOT BASELESS, AND THAT IS WHY IT SURVIVED REVIEW ONCE.
+    A gate legitimately lives in a different file from the container it protects —
+    just-akash's container is in `sdl/github-runner-probe.yaml` while its landing gate is in
+    `runner-pool.yml`. So a strictly per-file rule would flag that SDL forever.
+
+    ⇒ THE RULE CANNOT PROVE ASSOCIATION FROM WORKFLOW TEXT, so it says so rather than
+    guessing in either direction: a container with no bound of its own is REPORTED, and when
+    a bound exists elsewhere in the repo the finding NAMES it and asks for the association to
+    be stated. A false positive costs a sentence; the false clean cost the whole rule.
+    """
     files = _targets(workflows_dir)
     in_scope: list[Path] = []
     bounds: list[str] = []
+    bound_of: dict[Path, str] = {}
     for f in files:
         lines = _uncommented(_read(f))
         if any(_DEFINES_RUNNER.search(ln) for ln in lines):
@@ -188,9 +208,13 @@ def check(workflows_dir: Path) -> tuple[list[Finding], list[Path], list[str]]:
         b = _has_bound(lines)
         if b:
             bounds.append(f"{f.name}:{b}")
+            bound_of[f] = b
 
-    if not in_scope or bounds:
+    unbounded = [p for p in in_scope if p not in bound_of]
+    if not in_scope or not unbounded:
         return [], in_scope, bounds
+
+    elsewhere = ", ".join(sorted(f"{f.name}:{b}" for f, b in bound_of.items()))
 
     return (
         [
@@ -200,8 +224,15 @@ def check(workflows_dir: Path) -> tuple[list[Finding], list[Path], list[str]]:
                 path=str(p),
                 line=1,
                 message=(
-                    "This file defines a runner container, and the standard MANDATES "
-                    "auto-update (disable-auto-update-absent). Nothing in this repo bounds "
+                    (
+                        f"A bound EXISTS elsewhere in this repo ({elsewhere}), but this rule "
+                        "cannot prove from workflow text that it protects THIS container. "
+                        "If it does, say so; if it does not, this container is unbounded. "
+                        if elsewhere
+                        else ""
+                    )
+                    + "This file defines a runner container, and the standard MANDATES "
+                    "auto-update (disable-auto-update-absent). THIS container has no bound on "
                     "the register->die->restart pump that a failed update produces: no "
                     "landing gate (read `.version` back from orgs/.../actions/runners after "
                     "the pool reports online and close the lease on a mismatch or null) and "
@@ -210,7 +241,7 @@ def check(workflows_dir: Path) -> tuple[list[Finding], list[Path], list[str]]:
                     "CI quota floor for EVERY repo on the shared PAT."
                 ),
             )
-            for p in in_scope
+            for p in unbounded
         ],
         in_scope,
         bounds,
@@ -234,14 +265,25 @@ def main() -> int:
             "(no ACCESS_TOKEN / RUNNER_TOKEN / {{TOKEN_ENV}} assignment). "
             "This is NOT a pass; nothing was judged."
         )
-        return 0
+        # ⛔ EXIT 3, NOT 0. The conformance action's `advisory()` maps 0 -> PASS and
+        # 3 -> NOT-JUDGEABLE. Returning 0 here printed "This is NOT a pass" and was
+        # then reported as a PASS by the harness — the message said one thing and the
+        # exit code said the opposite, and the exit code is what the action reads.
+        return 3
 
     print(
         "auto-update-pump-has-a-bound: in scope -> "
         + ", ".join(p.name for p in in_scope)
     )
     if bounds:
+        # ⛔ INFORMATIONAL ONLY. This printed and then `return 0`, so ONE bound anywhere
+        # exited clean no matter how many runner containers were unbounded — the same
+        # fail-open as `check()`'s old `or bounds`, duplicated at the exit code. The
+        # verdict is now derived from FINDINGS, which is the only thing that knows
+        # whether a container was left unprotected. (Copilot, #69.)
         print("  bound(s) found: " + ", ".join(bounds))
+
+    if not findings:
         return 0
 
     for f in findings:
