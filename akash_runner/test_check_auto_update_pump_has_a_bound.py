@@ -234,3 +234,36 @@ def test_a_hash_inside_a_quoted_string_does_not_truncate_the_line(tmp_path):
     assert r.returncode == 0, (
         f"a `#` inside a quoted string truncated the line and lost a real gate:\n{r.stdout}"
     )
+
+
+def test_an_escaped_backslash_does_not_hide_a_comment(tmp_path):
+    """⛔ SEVENTH FAIL-OPEN (Copilot, #69). Escaping is decided by backslash PARITY.
+
+        echo "a\\\\" # .version
+
+    The `\\\\` is an escaped BACKSLASH, so the quote closes and `#` opens a comment. Testing
+    only the previous character (`prev != "\\\\"`) called that quote escaped, left the line
+    intact, and the comment's `.version` counted as a projection.
+    """
+    d = _wf(
+        tmp_path, "pool.yml",
+        "jobs:\n  x:\n" + RUNNER_CONTAINER
+        + '        raw="$(gh api "orgs/X/actions/runners")" ; echo "a\\\\" # .version\n',
+    )
+    r = _run(d)
+    assert r.returncode == 1, f"an escaped-backslash comment counted as a gate:\n{r.stdout}"
+
+
+def test_a_comment_after_a_semicolon_is_still_a_comment(tmp_path):
+    """⛔ EIGHTH FAIL-OPEN (Copilot, #69). `;` ends a word, so `;#` opens a shell comment.
+
+    Requiring whitespace before `#` missed it, and the comment's `.version` satisfied the
+    landing-gate test on the same line as the listing read.
+    """
+    d = _wf(
+        tmp_path, "pool.yml",
+        "jobs:\n  x:\n" + RUNNER_CONTAINER
+        + '        raw="$(gh api "orgs/X/actions/runners")";# .version not read\n',
+    )
+    r = _run(d)
+    assert r.returncode == 1, f"a `;#` comment counted as a gate:\n{r.stdout}"

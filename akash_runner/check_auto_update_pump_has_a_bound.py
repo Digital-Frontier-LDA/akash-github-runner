@@ -162,18 +162,29 @@ def _strip_inline_comment(line: str) -> str:
     contain `grep -c "#"` or a colour code. A `#` inside an open quote is content, not a
     comment, so only an unquoted one ends the line.
     """
-    out = []
+    # ⛔ TWO MORE FAIL-OPENS HERE, both Copilot on #69, both measured before fixing:
+    #   echo "a\\\\" # .version           the \\\\ is an ESCAPED BACKSLASH, so the quote
+    #                                  closes and the # IS a comment. Testing
+    #                                  `prev != "\\"` called it escaped and kept the line.
+    #   raw=$(gh api runners);# .version   `;` ends a word, so `;#` starts a comment in
+    #                                  shell. Requiring whitespace before `#` missed it.
+    # Escaping is decided by the PARITY of the backslash run, not by the previous character.
+    out: list[str] = []
     in_s = in_d = False
-    prev = ""
+    nbs = 0  # consecutive backslashes immediately before this character
+    STARTERS = ";&|("  # shell metacharacters that end a word, so a following # opens a comment
     for i, ch in enumerate(line):
-        if ch == "'" and not in_d and prev != "\\":
+        escaped = nbs % 2 == 1
+        if ch == "'" and not in_d and not escaped:
             in_s = not in_s
-        elif ch == '"' and not in_s and prev != "\\":
+        elif ch == '"' and not in_s and not escaped:
             in_d = not in_d
-        elif ch == "#" and not in_s and not in_d and (i == 0 or line[i - 1].isspace()):
-            break
+        elif ch == "#" and not in_s and not in_d:
+            prev = line[i - 1] if i else ""
+            if i == 0 or prev.isspace() or prev in STARTERS:
+                break
+        nbs = nbs + 1 if ch == "\\" else 0
         out.append(ch)
-        prev = ch
     return "".join(out)
 
 
