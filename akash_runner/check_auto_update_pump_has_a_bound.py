@@ -54,6 +54,26 @@ this failure in comments — Blazing-Back's `akash-runner.yml` holds the whole h
 Accepting a commented mention would certify the analysis as the fix. Comment lines are
 stripped before the bound is looked for, and `test_a_commented_gate_is_not_a_bound` pins it.
 
+⛔ WHAT A PASS DOES **NOT** CERTIFY — READ THIS BEFORE PROMOTING THE RULE.
+This rule proves the evidence is READ. It does not prove the evidence is ACTED ON. Those
+are different claims and only the first is statically checkable here.
+
+Demonstrated by DEV1 while building just-akash#262: adding the `.version` projection alone
+flipped this rule to exit 0 BEFORE any decision, any comparison, any lease close existed.
+A workflow can therefore satisfy this rule while discarding nothing. Had the rule been
+promoted to ENFORCING on that state, it would have certified an unbounded pool.
+
+⇒ SO THE PROMOTION CONDITION IS NOT "consumers go green". A green here means the consumer
+stopped being blind, not that it stopped pumping. Promote only against a gate whose
+DECISION has been exercised — including the degenerate read that the same PR found and
+fixed: N runner ids with ZERO versions is a read disagreeing with itself, and it was
+rendering as a healthy pool. The gate's own failure mode was the failure the gate exists
+to stop.
+
+The honest framing of this rule is: it removes the excuse of not looking. Closing the loop
+from "looked" to "acted" needs a behavioural test in the consumer, and that test belongs
+there, not here — a conformance checker reading workflow text cannot run the decision.
+
 ⚠ NOT APPLICABLE IS A THIRD STATE AND IS PRINTED. A repo that defines no runner container
 is not thereby compliant; it is out of scope, and saying "PASS" would let a scope bug read
 as a clean bill. `check_runner_image_digest_floor` reported NOT APPLICABLE on the exact
