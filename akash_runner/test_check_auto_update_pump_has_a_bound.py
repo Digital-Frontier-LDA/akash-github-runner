@@ -192,3 +192,45 @@ def test_not_applicable_exits_3_not_0(tmp_path):
     r = _run(d)
     assert r.returncode == 3, f"NOT APPLICABLE returned {r.returncode}, not 3:\n{r.stdout}"
     assert "NOT APPLICABLE" in r.stdout
+
+
+def test_an_inline_comment_is_not_a_bound(tmp_path):
+    """⛔ THE SIXTH FAIL-OPEN (CodeRabbit, #69) — and my own comment test could not see it.
+
+    One line can satisfy both halves at once when the comment is INLINE:
+        raw="$(gh api .../actions/runners)"   # .version is NOT read here
+    The code matches the listing read, the COMMENT matches the version projection, same line,
+    trivially within the window. Measured before the fix: exit 0, reported as bounded.
+
+    `test_a_commented_gate_is_not_a_bound` used a WHOLE-LINE comment, so it proved the half
+    that worked and never touched the half that did not.
+    """
+    d = _wf(
+        tmp_path, "pool.yml",
+        "jobs:\n  x:\n" + RUNNER_CONTAINER
+        + '        raw="$(gh api "orgs/X/actions/runners?per_page=100")"   # .version not read\n',
+    )
+    r = _run(d)
+    assert r.returncode == 1, (
+        f"an inline comment supplied the only version projection and passed:\n{r.stdout}"
+    )
+
+
+def test_a_hash_inside_a_quoted_string_does_not_truncate_the_line(tmp_path):
+    """The OTHER direction: stripping from any `#` would eat legitimate code.
+
+    A gate may contain `grep -c "#"` or a colour code. Without this, the comment fix would
+    turn a real gate into a finding — trading a fail-open for a fail-closed, which is the
+    same defect wearing the safe colour.
+    """
+    body = (
+        "jobs:\n  x:\n" + RUNNER_CONTAINER
+        + '        raw="$(gh api "orgs/X/actions/runners?per_page=100")"  # real code below\n'
+        + '        echo "colour #FFF marker"\n'
+        + VERSION_PROJECTION
+    )
+    d = _wf(tmp_path, "pool.yml", body)
+    r = _run(d)
+    assert r.returncode == 0, (
+        f"a `#` inside a quoted string truncated the line and lost a real gate:\n{r.stdout}"
+    )

@@ -98,8 +98,7 @@ ADVISORY: dict[str, str] = {
         "decision not to adopt."
     ),
     "check_auto_update_pump_has_a_bound.py": (
-        "ADVISORY because EVERY in-scope repo FAILS TODAY and the only fix that exists is "
-        "unmerged. This rule closes the half of the auto-update trade that "
+        "ADVISORY because IN-SCOPE REPOS STILL FAIL, though no longer all of them. ⭐ UPDATED 2026-09-05: just-akash now PASSES — the landing gate landed in the shared `runner-pool.yml` (just-akash#262, merged e460729da), so every consumer of that workflow inherits it. Blazing-Back is the multi-file case this rule exists for: `akash-runner.yml` is bound (#1590, merged 99b615b6b) while `runner-time-to-ready.yml` is NOT, and before the per-container fix the first would have silenced the second and the repo would have read clean. blazing still fails on 3 in-scope files. This rule closes the half of the auto-update trade that This rule closes the half of the auto-update trade that "
         "check_disable_auto_update_absent does not weigh: that rule MANDATES auto-update "
         "(rightly — deprecation is date-based, so a static floor rots), and auto-update "
         "then has its own pump. Measured on borduas-pool deployment 1788575148893 "

@@ -141,9 +141,49 @@ _WINDOW = 40
 _RESTART = re.compile(r"^\s*restart\s*:\s*(?P<v>[A-Za-z-]+)")
 
 
+def _strip_inline_comment(line: str) -> str:
+    """Drop a trailing shell/YAML comment, but not a `#` inside a quoted string.
+
+    ⛔ THE SIXTH FAIL-OPEN IN THIS PR (CodeRabbit, #69). The first version dropped only
+    WHOLE-LINE comments, so one line could satisfy both halves of the landing-gate test at
+    once:
+
+        raw="$(gh api .../actions/runners)"   # .version is NOT read here
+
+    `_READS_LISTING` matched the code and `_PROJECTS_VERSION` matched the COMMENT, on the
+    same line and therefore trivially "within the window". Measured: a runner container whose
+    only `.version` was an inline comment exited 0 — reported as bounded.
+
+    ⚠ AND MY OWN TEST COULD NOT SEE IT. `test_a_commented_gate_is_not_a_bound` used a
+    whole-line comment, so it proved the half that worked and never touched the half that did
+    not — the same one-sided control that let every other fail-open here survive.
+
+    ⚠ Quote-aware because stripping from any `#` would truncate legitimate code: a gate may
+    contain `grep -c "#"` or a colour code. A `#` inside an open quote is content, not a
+    comment, so only an unquoted one ends the line.
+    """
+    out = []
+    in_s = in_d = False
+    prev = ""
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_d and prev != "\\":
+            in_s = not in_s
+        elif ch == '"' and not in_s and prev != "\\":
+            in_d = not in_d
+        elif ch == "#" and not in_s and not in_d and (i == 0 or line[i - 1].isspace()):
+            break
+        out.append(ch)
+        prev = ch
+    return "".join(out)
+
+
 def _uncommented(text: str) -> list[str]:
-    """Lines with whole-line comments dropped — a commented gate is not a gate."""
-    return [ln for ln in text.splitlines() if not ln.strip().startswith("#")]
+    """Lines with comments removed — a commented gate is not a gate, inline or whole-line."""
+    return [
+        _strip_inline_comment(ln)
+        for ln in text.splitlines()
+        if not ln.strip().startswith("#")
+    ]
 
 
 def _read(path: Path) -> str:
