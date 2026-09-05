@@ -227,6 +227,7 @@ runs:
           check_conformance_pin_agrees_with_checker_ref.py
           check_listing_failure_is_loud.py
           check_stale_runner_reaper_is_adopted.py
+          check_auto_update_pump_has_a_bound.py
         )
 
         if [ -n "${WORKFLOWS_DIR:-}" ]; then
@@ -376,6 +377,20 @@ runs:
           # akash_runner/test_every_rule_has_a_call_site.py.
           advisory check_listing_failure_is_loud.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_stale_runner_reaper_is_adopted.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ THE OTHER HALF OF THE AUTO-UPDATE MANDATE. The rule above REQUIRES
+          # auto-update, correctly: GitHub deprecates on a DATE, so a static floor rots.
+          # But auto-update has its own pump, and nothing bounded it. Measured on
+          # borduas-pool deployment 1788575148893 (2026-09-05): a HEALTHY 2.336.0 runner,
+          # already "Listening for Jobs" and carrying NO deprecation message, took the
+          # mandated 2.337.0 update, exited, failed to deregister, and left a broken
+          # assembly load. Same signature as the deprecated-runner pump — register, die,
+          # restart, re-register — from the opposite cause.
+          # Both pumps need ONE precondition: an unbounded restart of a container that can
+          # register but never work. This rule requires that precondition be broken.
+          # ⚠ ADVISORY: all three in-scope repos FAIL today (measured 2026-09-05) and the
+          # only landing gate that exists is unmerged. Promotion condition is in the
+          # ADVISORY entry in akash_runner/test_every_rule_has_a_call_site.py.
+          advisory check_auto_update_pump_has_a_bound.py --workflows-dir "$WORKFLOWS_DIR"
         else
           # ⛔ SAY SO, SAY ALL OF IT, AND SAY IT LOUD ENOUGH TO SEE. A skipped rule that
           # reports nothing is indistinguishable from a rule that passed. `::notice` is
