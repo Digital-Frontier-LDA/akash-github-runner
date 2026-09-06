@@ -60,6 +60,7 @@ def _run(
     closed_line: str = "closed=20 failed=0",
     prefix: str = "just-akash-",
     reap_owned: str | None = None,
+    stale_line: str = "stale (closable): 20",
 ):
     """Execute the real step script with a fake `uv` that records its argv."""
     bindir = tmp_path / "bin"
@@ -68,7 +69,7 @@ def _run(
         textwrap.dedent(f"""\
         #!/bin/bash
         printf '%s\\n' "$*" >> "{tmp_path}/argv.txt"
-        echo "stale (closable): 20"
+        {'echo "' + stale_line + '"' if stale_line else ':'}
         echo "{closed_line}"
         exit {sweep_rc}
         """)
@@ -280,3 +281,28 @@ def test_an_unset_reap_owned_does_not_abort_the_step(tmp_path, execute):
     )
     assert "--reap-runners" in argv
     assert "--reap-owned" not in argv
+
+
+# ── the stale count is the only signal a report-only consumer can act on ─────────────────
+# On `schedule` this workflow is dry-run by design, so `closed` is always 0 and carries no
+# information. `stale` is what a caller alarms on. Two properties matter, and the second is
+# the one this repo has already been bitten by.
+
+
+def test_stale_count_reaches_the_caller(tmp_path):
+    """A dry run reports what it WOULD close, so a consumer can escalate on a backlog."""
+    _, _, out = _run(tmp_path, execute="false")
+    assert "stale=20" in out, out
+
+
+def test_a_missing_verdict_line_is_UNKNOWN_and_never_zero(tmp_path):
+    """⛔ The classifier printing nothing must not read as a clean account.
+
+    This file records the cost of that exact confusion: six deployments held 28.28 ACT for
+    62-139h "while the sweep reported stale (closable): 0 every run". A default of 0 here
+    would rebuild that false negative one layer up, where a consumer alarms on it — and an
+    alarm that cannot fire is worse than none, because it certifies the silence.
+    """
+    _, _, out = _run(tmp_path, execute="false", stale_line="")
+    assert "stale=UNKNOWN" in out, out
+    assert "stale=0" not in out, out

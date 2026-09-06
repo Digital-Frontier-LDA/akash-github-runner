@@ -119,6 +119,20 @@ on:
       closed:
         description: Number of deployments closed (0 on a report-only run).
         value: ${{ jobs.reap.outputs.closed }}
+      stale:
+        description: >-
+          Number of deployments classified closable, or the literal `UNKNOWN` when the
+          classifier printed no verdict line.
+
+          ⚠ THIS IS THE SIGNAL A REPORT-ONLY CONSUMER CAN ALARM ON. On `schedule` this
+          workflow is deliberately dry-run — closing is a human dispatch, and the scar
+          behind that rule is a sweeper without an ownership predicate destroying a 200 GiB
+          research volume four times. But report-only with nothing watching the report is
+          how a backlog accumulates in silence: a consumer ran this every six hours, green
+          every time, while 165 leases orphaned and 152 were eventually closed by hand.
+          Consumers should fail, or open an issue, when this exceeds a threshold — and must
+          treat `UNKNOWN` as an alarm, never as zero.
+        value: ${{ jobs.reap.outputs.stale }}
 
 permissions:
   contents: read
@@ -132,6 +146,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       closed: ${{ steps.sweep.outputs.closed }}
+      stale: ${{ steps.sweep.outputs.stale }}
     steps:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -236,6 +251,14 @@ jobs:
           fi
           closed=$(grep -oE '^closed=[0-9]+' /tmp/sweep.log | tail -1 | cut -d= -f2 || true)
           echo "closed=${closed:-0}" >> "$GITHUB_OUTPUT"
+          # ⛔ ABSENT IS NOT ZERO. `closed` is legitimately 0 on a report-only run, but a
+          #    MISSING `stale (closable):` line means the classifier never reported — and this
+          #    file already records what that costs: six Blazing-Back deployments held 28.28 ACT
+          #    for 62-139h "while the sweep reported stale (closable): 0 every run", a false
+          #    negative that reads exactly like a clean account. Emitting 0 here would rebuild
+          #    that same lie one layer up, where a consumer alarms on it.
+          stale=$(grep -oE '^stale \(closable\): [0-9]+' /tmp/sweep.log | tail -1 | grep -oE '[0-9]+$' || true)
+          echo "stale=${stale:-UNKNOWN}" >> "$GITHUB_OUTPUT"
           # The classifier prints its own verdict table; surface the summary line so a caller
           # reading the run list sees the number without opening the log.
           grep -E '^(stale \(closable\)|closed=)' /tmp/sweep.log | tail -2 >> "$GITHUB_STEP_SUMMARY" || true
