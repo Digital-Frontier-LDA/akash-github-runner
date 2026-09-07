@@ -90,6 +90,13 @@ SUPPORTED_FLOOR = (2, 336, 0)
 # is not punished for it.
 _FLOORS: dict[str, tuple[int, int, int]] = {
     "myoung34/github-runner": SUPPORTED_FLOOR,
+    # ⚠ NO FLOOR FOR df-akash-runner, DELIBERATELY. Its tag IS the runner binary version
+    # (2.337.0), so currency is readable from the reference — but a floor is a claim about
+    # which versions a PUBLISHER still supports, and this image is published in-estate with
+    # a nightly that re-pins it. Asserting a constant floor here would encode a number that
+    # goes stale the first time the nightly bumps, and a stale floor fails a CURRENT image.
+    # The tagless/floorless verdict is the honest one: pinned, digest verified, currency
+    # checked elsewhere by the nightly rather than frozen into this checker.
 }
 
 
@@ -130,7 +137,12 @@ def _floor_for(image: str) -> tuple[int, int, int] | None:
 # group is therefore OPTIONAL, and a digest with no tag is its own case: pinned, but the
 # version is not readable from the reference, so currency cannot be checked here.
 _RUNNER_RE = re.compile(
-    r"(?:^|/)github-runner"
+    # ⛔ BOTH NAMES. `df-akash-runner` does not contain "github-runner", so this rule
+    # reported "NOT APPLICABLE — no runner image references found" the moment a consumer
+    # moved to it — silently, on a repo it was actively meant to check. That is the third
+    # time a too-literal assumption in THIS file produced a NOT-APPLICABLE verdict on the
+    # very image that motivated the rule. The older name stays: pre-swap workflows exist.
+    r"(?:^|/)(?:github-runner|df-akash-runner)"
     r"(?::(?P<tag>[^@\s]+))?"
     r"(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?"
     r"(?=$|\s)"
@@ -153,12 +165,12 @@ _RUNNER_RE = re.compile(
 # lookahead also kills the substring, but strips the digest from every extracted
 # reference -- and _RUNNER_RE then reports the canonical refs as FLOATING. Measured.
 _IMAGE_REF = re.compile(
-    r"(?<![A-Za-z0-9_\-])"
+    r"(?<![A-Za-z0-9_.\-])"
     r"(?:[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*/)?"
-    r"github-runner"
+    r"(?:github-runner|df-akash-runner)"
     r"(?::[^\s\"'<>`@]+)?"
     r"(?:@sha256:[0-9a-fA-F]{64})?"
-    r"(?![A-Za-z0-9_\-])"
+    r"(?![A-Za-z0-9_.\-])"
 )
 _VERSION_RE = re.compile(r"^(?P<version>\d+\.\d+\.\d+)(?:-|$)")
 
