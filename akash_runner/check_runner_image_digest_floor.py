@@ -130,7 +130,12 @@ def _floor_for(image: str) -> tuple[int, int, int] | None:
 # group is therefore OPTIONAL, and a digest with no tag is its own case: pinned, but the
 # version is not readable from the reference, so currency cannot be checked here.
 _RUNNER_RE = re.compile(
-    r"(?:^|/)github-runner"
+    # ⛔ BOTH NAMES. `df-akash-runner` does not contain "github-runner", so this rule
+    # reported "NOT APPLICABLE — no runner image references found" the moment a consumer
+    # moved to it — silently, on a repo it was actively meant to check. That is the third
+    # time a too-literal assumption in THIS file produced a NOT-APPLICABLE verdict on the
+    # very image that motivated the rule. The older name stays: pre-swap workflows exist.
+    r"(?:^|/)(?:github-runner|df-akash-runner)"
     r"(?::(?P<tag>[^@\s]+))?"
     r"(?:@(?P<digest>sha256:[0-9a-fA-F]{64}))?"
     r"(?=$|\s)"
@@ -155,7 +160,7 @@ _RUNNER_RE = re.compile(
 _IMAGE_REF = re.compile(
     r"(?<![A-Za-z0-9_\-])"
     r"(?:[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*/)?"
-    r"github-runner"
+    r"(?:github-runner|df-akash-runner)"
     r"(?::[^\s\"'<>`@]+)?"
     r"(?:@sha256:[0-9a-fA-F]{64})?"
     r"(?![A-Za-z0-9_\-])"
