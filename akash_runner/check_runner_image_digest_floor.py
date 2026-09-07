@@ -90,6 +90,13 @@ SUPPORTED_FLOOR = (2, 336, 0)
 # is not punished for it.
 _FLOORS: dict[str, tuple[int, int, int]] = {
     "myoung34/github-runner": SUPPORTED_FLOOR,
+    # ⚠ NO FLOOR FOR df-akash-runner, DELIBERATELY. Its tag IS the runner binary version
+    # (2.337.0), so currency is readable from the reference — but a floor is a claim about
+    # which versions a PUBLISHER still supports, and this image is published in-estate with
+    # a nightly that re-pins it. Asserting a constant floor here would encode a number that
+    # goes stale the first time the nightly bumps, and a stale floor fails a CURRENT image.
+    # The tagless/floorless verdict is the honest one: pinned, digest verified, currency
+    # checked elsewhere by the nightly rather than frozen into this checker.
 }
 
 

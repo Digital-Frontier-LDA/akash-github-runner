@@ -288,3 +288,55 @@ def test_a_registry_port_does_not_strip_the_floor() -> None:
     assert mod.findings(f"localhost:5000/{_MYOUNG34}:2.336.0-ubuntu-jammy{_DIGEST}") == []
     below = mod.findings(f"localhost:5000/{_MYOUNG34}:2.300.0-ubuntu-jammy{_DIGEST}")
     assert below and "below supported floor" in below[0], below
+
+
+# ── df-akash-runner: the estate's own image ──────────────────────────────────────────────
+# ⛔ REGRESSION FIXTURES. This rule has now reported NOT APPLICABLE on a real, pinned runner
+#    image THREE times, each after a literal it hardcoded stopped matching (#18's substring
+#    test, the tagless form, and `df-akash-runner` not containing "github-runner"). Every
+#    time, the verdict rendered as "nothing to check" and read as clean.
+#
+#    So the new name gets fixtures asserting it is SEEN, not merely that the suite passes.
+
+
+def test_a_df_akash_runner_reference_is_extracted_and_parsed():
+    """The new image must be EXTRACTED and its tag/digest READ — not NOT APPLICABLE."""
+    ref = (
+        "ghcr.io/digital-frontier-lda/df-akash-runner:2.337.0"
+        "@sha256:aaf3799b5e138abef0831bb8467ded7325164316f0cfde5c183fe6e129eae79e"
+    )
+    found = mod._IMAGE_REF.findall(f"              image: {ref}\n")
+    assert found == [ref], f"the reference was not extracted: {found}"
+
+    m = mod._RUNNER_RE.search(found[0])
+    assert m, "extracted but not parsed by _RUNNER_RE"
+    assert m.group("tag") == "2.337.0", f"tag misread: {m.group('tag')}"
+    assert m.group("digest").startswith("sha256:aaf3799b"), f"digest misread: {m.group('digest')}"
+
+
+def test_the_widened_pattern_still_rejects_near_misses():
+    """Widened by ALTERNATION, not loosened to a substring test.
+
+    A broadened pattern is exactly the kind that stops discriminating quietly, so the
+    shapes it must still reject are pinned rather than assumed.
+    """
+    for near in (
+        "ghcr.io/x/df-akash-runner-sidecar:1.0",
+        "ghcr.io/x/df-akash-runnerx:1.0",
+        "ghcr.io/x/notgithub-runner:1.0",
+    ):
+        assert not mod._IMAGE_REF.findall(near), f"{near} matched — the pattern became a substring test"
+
+    for real in (
+        "myoung34/github-runner:2.336.0-ubuntu-jammy",
+        "ghcr.io/digital-frontier-lda/df-akash-runner:2.337.0",
+    ):
+        assert mod._IMAGE_REF.findall(real), f"{real} did NOT match — the checker is blind to it"
+
+
+def test_the_old_name_is_still_recognised():
+    """⛔ ADD, NEVER REPLACE. Pre-swap workflows exist in history, in unrebased branches,
+    and in consumers that have not moved. A checker blind to them reports those repos as
+    carrying no runner image — clean, rather than unexamined."""
+    ref = "myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:" + "8" * 64
+    assert mod._IMAGE_REF.findall(ref) == [ref], "the previous image name is no longer recognised"

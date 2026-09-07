@@ -130,7 +130,11 @@ CREATES_REGISTRATIONS = re.compile(
     r"RUNNER_SCOPE"  # the runner image's org-vs-repo switch
     r"|ACCESS_TOKEN\s*="  # a credential handed to a runner process
     r"|RUNNER_NAME_PREFIX"  # only something that CREATES them names them
-    r"|(?:github-runner|df-akash-runner)"  # a runner image reference
+    # ⚠ BOUNDARIES. Without them the alternation matches inside `df-akash-runner-sidecar`,
+    # `notgithub-runner` and `my-df-akash-runner`. This rule DETECTS runner-creating
+    # files, so an over-broad match errs toward demanding a backstop where none is
+    # needed — noisy rather than unsafe, but it is still a claim about the wrong file.
+    r"|(?<![A-Za-z0-9_.-])(?:github-runner|df-akash-runner)(?![A-Za-z0-9_-])"  # a runner image reference
     r"|actions/runners/registration-token"  # minting a registration token directly
     r"|config\.sh\b[^\n]*--token"  # actions/runner configured in place
 )
