@@ -165,12 +165,12 @@ _RUNNER_RE = re.compile(
 # lookahead also kills the substring, but strips the digest from every extracted
 # reference -- and _RUNNER_RE then reports the canonical refs as FLOATING. Measured.
 _IMAGE_REF = re.compile(
-    r"(?<![A-Za-z0-9_\-])"
+    r"(?<![A-Za-z0-9_.\-])"
     r"(?:[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*/)?"
     r"(?:github-runner|df-akash-runner)"
     r"(?::[^\s\"'<>`@]+)?"
     r"(?:@sha256:[0-9a-fA-F]{64})?"
-    r"(?![A-Za-z0-9_\-])"
+    r"(?![A-Za-z0-9_.\-])"
 )
 _VERSION_RE = re.compile(r"^(?P<version>\d+\.\d+\.\d+)(?:-|$)")
 

@@ -299,7 +299,7 @@ def test_a_registry_port_does_not_strip_the_floor() -> None:
 #    So the new name gets fixtures asserting it is SEEN, not merely that the suite passes.
 
 
-def test_a_df_akash_runner_reference_is_extracted_and_parsed():
+def test_a_df_akash_runner_reference_is_extracted_and_parsed() -> None:
     """The new image must be EXTRACTED and its tag/digest READ — not NOT APPLICABLE."""
     ref = (
         "ghcr.io/digital-frontier-lda/df-akash-runner:2.337.0"
@@ -311,10 +311,12 @@ def test_a_df_akash_runner_reference_is_extracted_and_parsed():
     m = mod._RUNNER_RE.search(found[0])
     assert m, "extracted but not parsed by _RUNNER_RE"
     assert m.group("tag") == "2.337.0", f"tag misread: {m.group('tag')}"
-    assert m.group("digest").startswith("sha256:aaf3799b"), f"digest misread: {m.group('digest')}"
+    digest = m.group("digest")
+    assert digest, "the digest group did not capture — a clear failure beats an AttributeError"
+    assert digest.startswith("sha256:aaf3799b"), f"digest misread: {digest}"
 
 
-def test_the_widened_pattern_still_rejects_near_misses():
+def test_the_widened_pattern_still_rejects_near_misses() -> None:
     """Widened by ALTERNATION, not loosened to a substring test.
 
     A broadened pattern is exactly the kind that stops discriminating quietly, so the
@@ -324,6 +326,8 @@ def test_the_widened_pattern_still_rejects_near_misses():
         "ghcr.io/x/df-akash-runner-sidecar:1.0",
         "ghcr.io/x/df-akash-runnerx:1.0",
         "ghcr.io/x/notgithub-runner:1.0",
+        "ghcr.io/x/df-akash-runner.sidecar:1.0",  # '.' is an identifier char in a repo path
+        "ghcr.io/x/github-runner.old:1.0",
     ):
         assert not mod._IMAGE_REF.findall(near), f"{near} matched — the pattern became a substring test"
 
@@ -334,7 +338,7 @@ def test_the_widened_pattern_still_rejects_near_misses():
         assert mod._IMAGE_REF.findall(real), f"{real} did NOT match — the checker is blind to it"
 
 
-def test_the_old_name_is_still_recognised():
+def test_the_old_name_is_still_recognised() -> None:
     """⛔ ADD, NEVER REPLACE. Pre-swap workflows exist in history, in unrebased branches,
     and in consumers that have not moved. A checker blind to them reports those repos as
     carrying no runner image — clean, rather than unexamined."""
