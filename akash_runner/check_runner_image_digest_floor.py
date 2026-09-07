@@ -90,13 +90,21 @@ SUPPORTED_FLOOR = (2, 336, 0)
 # is not punished for it.
 _FLOORS: dict[str, tuple[int, int, int]] = {
     "myoung34/github-runner": SUPPORTED_FLOOR,
-    # ⚠ NO FLOOR FOR df-akash-runner, DELIBERATELY. Its tag IS the runner binary version
-    # (2.337.0), so currency is readable from the reference — but a floor is a claim about
-    # which versions a PUBLISHER still supports, and this image is published in-estate with
-    # a nightly that re-pins it. Asserting a constant floor here would encode a number that
-    # goes stale the first time the nightly bumps, and a stale floor fails a CURRENT image.
-    # The tagless/floorless verdict is the honest one: pinned, digest verified, currency
-    # checked elsewhere by the nightly rather than frozen into this checker.
+    # ⛔ I ARGUED AGAINST THIS ENTRY ON #71 AND WAS WRONG. The reasoning was "a constant floor
+    # goes stale the first time the nightly bumps, and a stale floor fails a CURRENT image".
+    # True, and it is the smaller cost. Measured on Blazing-Back#1859: with no floor, the rule
+    # emitted
+    #     runner image 'ghcr.io/digital-frontier-lda/df-akash-runner:2.337.0@sha256:aaf3799b…'
+    #     has a digest but no verifiable version tag
+    # — which is this file's own honest verdict for "currency was NOT checked". So the choice
+    # was never floor-vs-no-floor. It was CHECKED-BUT-POSSIBLY-STALE vs NEVER-CHECKED, and a
+    # stale floor fails LOUDLY on a current image while no floor silently checks nothing.
+    #
+    # ⚠ Same series as SUPPORTED_FLOOR: df-akash-runner's tag IS the actions/runner binary
+    # version, by construction — update.sh derives the tag from the actions/runner release it
+    # pins. So the same floor applies, and the nightly that bumps the image is what keeps this
+    # honest rather than a second number to maintain.
+    "ghcr.io/digital-frontier-lda/df-akash-runner": SUPPORTED_FLOOR,
 }
 
 

@@ -344,3 +344,25 @@ def test_the_old_name_is_still_recognised() -> None:
     carrying no runner image — clean, rather than unexamined."""
     ref = "myoung34/github-runner:2.336.0-ubuntu-jammy@sha256:" + "8" * 64
     assert mod._IMAGE_REF.findall(ref) == [ref], "the previous image name is no longer recognised"
+
+
+def test_df_akash_runner_currency_is_actually_CHECKED_not_declined() -> None:
+    """⛔ THE REGRESSION THIS FILE EXISTS FOR, in its newest form.
+
+    Without a `_FLOORS` entry the rule emitted "has a digest but no verifiable version tag"
+    — its own honest verdict for *currency was NOT checked*. Measured on Blazing-Back#1859.
+
+    That is the failure mode this whole file guards: a verdict that reads as a finding about
+    the image when it is actually a confession that no check happened. A current image and a
+    three-years-stale one produce the SAME output when the publisher has no floor.
+    """
+    current = "ghcr.io/digital-frontier-lda/df-akash-runner:2.337.0@sha256:" + "a" * 64
+    assert mod.findings(f"              image: {current}\n") == [], (
+        "a current df-akash-runner reference must PASS, not report 'no verifiable version tag'"
+    )
+
+    stale = "ghcr.io/digital-frontier-lda/df-akash-runner:2.335.0@sha256:" + "a" * 64
+    out = mod.findings(f"              image: {stale}\n")
+    assert out and "below supported floor" in out[0], (
+        f"a below-floor df-akash-runner reference must be CAUGHT, got: {out}"
+    )
