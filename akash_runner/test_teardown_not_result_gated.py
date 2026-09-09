@@ -119,7 +119,7 @@ def test_known_good_1439_fixed_predicate():
         )
 
 
-def test_known_good_just_akash_182_internalised_teardown():
+def test_unconditional_cleanup_without_handoff_remains_permitted():
     findings = check(
         _wf(
             {

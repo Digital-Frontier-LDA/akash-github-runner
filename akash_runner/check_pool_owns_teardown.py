@@ -1,38 +1,11 @@
 #!/usr/bin/env python3
-"""A workflow that hands out a lifecycle identity must own the job that reclaims it.
+"""A reusable resource producer owns rollback until successful handoff.
 
-⇒ THIS REPLACES THE RULE "every pool CONSUMER wires a teardown", which is unshippable:
-`runner-pool.yml` has ZERO `workflow_call` consumers, so that rule's population is EMPTY
-and it passes VACUOUSLY. A green over an empty set is not evidence, and a rule that cannot
-fail is worse than no rule — it reads as coverage.
-
-⚠ AND ITS PREMISE IS NOW OBSOLETE. just-akash #182 internalises teardown INTO the pool
-(`needs: [pool]`, `if: always()`). Once the pool owns its own teardown, "did every consumer
-remember to wire it?" is the wrong question — consumers inherit it and cannot forget. So
-the check moves from the CONSUMER (empty, unverifiable) to the DEFINITION (present,
-verifiable today).
-
-⛔ THE DEFECT IT CATCHES. Before #182, `runner-pool.yml` leased Akash deployments, published
-their `dseq`, and contained exactly one job: `pool`. Nothing in the workflow closed anything.
-The pairing with `runner-teardown.yml` existed only in a docstring, and 13 leases outlived
-their runs holding 65 ACT for 23.5h.
-
-⚠ WHAT THIS RULE CANNOT SEE — AND WHAT NOW DOES. `check_teardown_can_identify.py` (#151)
-implements the property described below. This rule still cannot see it; the caveat is kept
-because it explains WHY the split exists, and a caveat that quietly became false is the
-defect this standard is about. What changed is that the property is no longer unenforced.
-
-It cannot verify WHEN the identity is published. A pool that
-publishes `dseq` only after validation succeeds hands an EMPTY identity to a teardown that
-runs faithfully and closes nothing — DEV2's measured "13 leases outlived their runs".
-Verifying that needs bash control-flow analysis inside a `run:` block (tracking
-`$GITHUB_OUTPUT` writes against `exit`/`continue`/`break` across retry loops, subshells and
-heredocs). A positional proxy is defeatable, and shipping one would assert a property it
-does not implement — the exact defect this whole standard exists to remove.
-⇒ The structural mitigation is in this rule already: the teardown must be UNCONDITIONAL,
-including no precondition on the identity being non-empty. `runner-teardown.yml` treats an
-empty dseq as a successful no-op, so an unconditional teardown is safe on every path and
-publication timing stops mattering. See Blazing-Back #1440.
+A workflow_call output transfers the resource to caller jobs only after this reusable
+workflow finishes. Internal unconditional teardown destroys it before those jobs can
+start. Roll back failed/cancelled provisioning; successful handoff leaves normal
+cleanup to the caller after every consumer finishes. Identity publication and an
+independent cleanup backstop are still needed when provisioning is interrupted.
 """
 
 from __future__ import annotations
@@ -55,10 +28,18 @@ TEARDOWN_JOB = re.compile(
     r"(?:^|[-_])(?:teardown|close|destroy|reclaim)s?(?:$|[-_])", re.I
 )
 
-# ⚠ Duplicated from check_standard.py DELIBERATELY. That module's copy arrives with #139,
-# which is unmerged, and this branch is cut from main. Consolidate once #139 lands — a
-# shared import across two in-review branches would couple their review outcomes.
-RESULT_GATE = re.compile(r"needs\.[A-Za-z0-9_-]+\.result")
+
+def rollback_condition(condition: Any, producer: str) -> bool:
+    """Recognize the bounded failure/cancellation contract, without permissive parsing."""
+    expression = _text(condition).strip()
+    if expression.startswith("${{") and expression.endswith("}}"):
+        expression = expression[3:-2].strip()
+    return bool(
+        re.fullmatch(
+            rf"always\s*\(\s*\)\s*&&\s*needs\.{re.escape(producer)}\.result\s*!=\s*(['\"])success\1",
+            expression,
+        )
+    )
 
 
 def _text(value: Any) -> str:
@@ -90,45 +71,118 @@ def _published_identities(document: dict[str, Any]) -> dict[str, str]:
         if name not in LIFECYCLE_IDENTITY:
             continue
         expression = _text(spec.get("value") if isinstance(spec, dict) else spec)
-        match = re.search(r"jobs\.([A-Za-z0-9_-]+)\.outputs", expression)
+        match = re.fullmatch(
+            r"\s*\$\{\{\s*jobs\.([A-Za-z0-9_-]+)\.outputs\.dseq\s*\}\}\s*", expression
+        )
         found[name] = match.group(1) if match else ""
     return found
+
+
+def _receives_identity(job: dict[str, Any], producer: str, identity: str) -> bool:
+    return bool(
+        re.fullmatch(
+            rf"\s*\$\{{\{{\s*needs\.{re.escape(producer)}\.outputs\.{re.escape(identity)}\s*\}}\}}\s*",
+            _text((job.get("with") or {}).get(identity)),
+        )
+    )
+
+
+def _producer_exports_identity(job: dict[str, Any], identity: str) -> bool:
+    """Require a real job output wired to one existing producing step.
+
+    This validates wiring, not runtime execution. check_teardown_can_identify
+    separately checks early emission where shell identity assignments are visible.
+    """
+    outputs = job.get("outputs")
+    if not isinstance(outputs, dict):
+        return False
+    match = re.fullmatch(
+        rf"\s*\$\{{\{{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.{re.escape(identity)}\s*\}}\}}\s*",
+        _text(outputs.get(identity)),
+    )
+    if not match:
+        return False
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    sources = [
+        step for step in steps if isinstance(step, dict) and step.get("id") == match[1]
+    ]
+    return len(sources) == 1 and bool(sources[0].get("run") or sources[0].get("uses"))
+
+
+def _supported_closer(job: dict[str, Any]) -> bool:
+    """A teardown-shaped name cannot substitute for the canonical close operation."""
+    target = _text(job.get("uses"))
+    return target == "./.github/workflows/runner-teardown.yml" or bool(
+        re.fullmatch(
+            r"Digital-Frontier-LDA/just-akash/\.github/workflows/runner-teardown\.yml@(?:[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)",
+            target,
+        )
+    )
+
+
+def rollback_jobs(document: dict[str, Any]) -> set[str]:
+    """Names justified by resource-output wiring and rollback semantics, never a name allowlist."""
+    jobs = document.get("jobs") or {}
+    return {
+        name
+        for producer in _published_identities(document).values()
+        for name, job in jobs.items()
+        if producer in jobs
+        and _producer_exports_identity(jobs[producer], "dseq")
+        and _supported_closer(job)
+        and producer in _needs(job)
+        and rollback_condition(job.get("if"), producer)
+        and _receives_identity(job, producer, "dseq")
+    }
 
 
 def check(document: dict[str, Any]) -> list[str]:
     identities = _published_identities(document)
     if not identities:
-        return []  # hands out no reclaimable resource — nothing to own
-
+        return []
     jobs = document.get("jobs") or {}
     findings: list[str] = []
     for identity, producer in sorted(identities.items()):
-        teardowns = [n for n in jobs if TEARDOWN_JOB.search(n)]
+        if not producer or producer not in jobs:
+            findings.append(
+                f"{identity}: lifecycle output must identify an existing producer job"
+            )
+            continue
+        if not _producer_exports_identity(jobs[producer], identity):
+            findings.append(
+                f"{producer}: must publish {identity} from an existing producing step output"
+            )
+        teardowns = [
+            name
+            for name, job in jobs.items()
+            if TEARDOWN_JOB.search(name)
+            or "runner-teardown.yml" in _text(job.get("uses"))
+        ]
         if not teardowns:
             findings.append(
-                f"publishes lifecycle identity {identity!r} but contains no teardown job — "
-                f"the workflow hands out a resource it never reclaims, and any pairing that "
-                f"exists only in a docstring is not a mechanism"
+                f"publishes lifecycle identity {identity!r} but contains no teardown job for failed/cancelled provisioning"
             )
             continue
         for name in sorted(teardowns):
             job = jobs.get(name) or {}
-            if producer and producer not in _needs(job):
+            if not _supported_closer(job):
                 findings.append(
-                    f"{name}: must need {producer!r}, the job that creates {identity!r}; "
-                    f"otherwise it can run before the resource exists"
+                    f"{name}: rollback must call the canonical runner-teardown reusable at an immutable ref or local path"
                 )
-            condition = _text(job.get("if"))
-            if RESULT_GATE.search(condition):
+            if producer not in _needs(job):
                 findings.append(
-                    f"{name}: teardown must not be gated on a job result ({condition!r}) — "
-                    f"a pool that fails after leasing would skip its own closer"
+                    f"{name}: rollback must need {producer!r}, the resource producer"
                 )
-            elif condition and identity in condition:
+            if not rollback_condition(job.get("if"), producer):
                 findings.append(
-                    f"{name}: teardown must not be preconditioned on {identity!r} being "
-                    f"non-empty ({condition!r}) — an empty identity is a safe no-op, and "
-                    f"gating here re-trains the success-gating this rule exists to remove"
+                    f"{name}: internal rollback must use always() && needs.{producer}.result != 'success'; "
+                    "successful handoff must survive until caller consumers finish"
+                )
+            if not _receives_identity(job, producer, identity):
+                findings.append(
+                    f"{name}: rollback must receive needs.{producer}.outputs.{identity}"
                 )
     return findings
 

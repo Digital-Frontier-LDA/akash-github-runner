@@ -111,18 +111,10 @@ runs:
           check_pool_owns_teardown.py
         )
 
-        # ── ADVISORY ──────────────────────────────────────────────────────────────────
-        # ⚠ REPORTED, NOT ENFORCED — ON PURPOSE, AND NOT FOREVER. These three have never
-        # judged a consumer. Turning them on at full strength would fail real repos on
-        # their next run for defects that have been latent for weeks, and at least one
-        # would fail a repo that is correct today: check_pool_owns_teardown requires an
-        # unconditional teardown on the premise that "an empty identity is a safe no-op",
-        # which is TRUE for just-akash (runner-teardown.yml:140 no-ops) and FALSE for
-        # Blazing-Back (ci_close_akash_deployment.sh:43 exits 1). Enforcing before that
-        # repo can comply converts a silent gap into a broken pipeline.
-        # ⇒ Advisory first so the blast radius is MEASURED, then promoted. The promotion
-        # criteria live in the test file beside the reason, so "temporary" has a
-        # definition instead of being whatever nobody got round to.
+        # The standalone pool-rollback report remains advisory for compatibility.
+        # Its resource handoff contract also runs through enforcing check_standard:
+        # a reusable producer rolls back failed/cancelled provisioning, and transfers
+        # successful provisioning to caller cleanup after all consumers finish.
         # ⛔ EXIT 3 IS "NOT-JUDGEABLE": the rule ran, was called correctly, and its population
         # was EMPTY — it observed nothing. Neither a pass nor a finding. Before this it shared
         # exit 1 with real defects, so a fleet sweep could not separate "this rule does not

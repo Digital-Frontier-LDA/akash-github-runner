@@ -29,6 +29,12 @@ from its outputs, every downstream teardown pairing would break and nothing woul
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
 from akash_runner.check_standard import check
 
 NO_POOL = "no canonical just-akash runner-pool reusable job found"
@@ -56,16 +62,30 @@ def _pool(inputs=None, secrets=None, outputs=None, jobs=None):
                     )
                 },
                 "outputs": {
-                    k: {"value": "x"}
+                    k: {"value": "${{ jobs.pool.outputs." + k + " }}"}
                     for k in (
-                        outputs
-                        if outputs is not None
-                        else ["dseq", "runner-targets"]
+                        outputs if outputs is not None else ["dseq", "runner-targets"]
                     )
                 },
             }
         },
-        "jobs": jobs if jobs is not None else {"pool": {"runs-on": "ubuntu-latest"}},
+        "jobs": jobs
+        if jobs is not None
+        else {
+            "pool": {
+                "runs-on": "ubuntu-latest",
+                "outputs": {"dseq": "${{ steps.provision.outputs.dseq }}"},
+                "steps": [
+                    {"id": "provision", "run": 'echo "dseq=1" >> "$GITHUB_OUTPUT"'}
+                ],
+            },
+            "teardown": {
+                "needs": ["pool"],
+                "if": "always() && needs.pool.result != 'success'",
+                "uses": "./.github/workflows/runner-teardown.yml",
+                "with": {"dseq": "${{ needs.pool.outputs.dseq }}"},
+            },
+        },
     }
 
 
@@ -152,11 +172,6 @@ def test_an_unrelated_reusable_workflow_is_not_mistaken_for_the_pool():
 
 # ── CLI surface ──────────────────────────────────────────────────────────────────────
 
-import subprocess
-import sys
-from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -182,7 +197,9 @@ def test_cli_accepts_an_explicit_pool_target_kind(tmp_path):
 
 def test_cli_explicit_pool_mode_fails_a_pool_missing_dseq(tmp_path):
     """Known-positive control: the mode is not inert when driven from the CLI."""
-    r = _run("--target-kind", "pool", _write(tmp_path, _pool(outputs=["runner-targets"])))
+    r = _run(
+        "--target-kind", "pool", _write(tmp_path, _pool(outputs=["runner-targets"]))
+    )
     assert r.returncode == 1
     assert "dseq" in r.stdout
 

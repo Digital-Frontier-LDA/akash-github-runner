@@ -13,6 +13,7 @@ import sys
 from typing import Any
 
 import yaml
+from check_pool_owns_teardown import check as check_handoff, rollback_jobs
 
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
@@ -68,7 +69,9 @@ def _ref(uses: str) -> str:
     return uses.rsplit("@", 1)[-1] if "@" in uses else ""
 
 
-def _result_gated_teardowns(jobs: dict[str, Any]) -> list[str]:
+def _result_gated_teardowns(
+    jobs: dict[str, Any], rollbacks: set[str] | frozenset[str] = frozenset()
+) -> list[str]:
     """Teardown-shaped jobs whose `if:` gates on a provisioner's result.
 
     ⚠ Selection is by JOB NAME, and that is a heuristic — the only signal available in a
@@ -82,7 +85,7 @@ def _result_gated_teardowns(jobs: dict[str, Any]) -> list[str]:
     """
     findings: list[str] = []
     for name, job in jobs.items():
-        if not TEARDOWN_NAME.search(name):
+        if name in rollbacks or not TEARDOWN_NAME.search(name):
             continue
         condition = _text((job or {}).get("if"))
         if not RESULT_GATE.search(condition):
@@ -93,7 +96,7 @@ def _result_gated_teardowns(jobs: dict[str, Any]) -> list[str]:
             f"{name}: teardown must not be gated on its provisioner's result "
             f"({condition!r}) — a provision that creates a resource and then fails or is "
             f"cancelled never reaches success, so its own closer is skipped and the "
-            f"resource leaks. Use if: always(), gating on output presence if needed."
+            f"resource leaks. Caller cleanup must run after every consumer; reusable rollback must satisfy the handoff contract."
         )
     return findings
 
@@ -221,7 +224,8 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
     # fire. Blazing-Back is such a repo, and it is where the leak happened. A rule placed
     # below would be correct and unreachable — the same defect shape this campaign exists
     # to remove, authored into the fix for it.
-    findings.extend(_result_gated_teardowns(jobs))
+    findings.extend(check_handoff(document))
+    findings.extend(_result_gated_teardowns(jobs, rollback_jobs(document)))
 
     # ⇒ POOL MODE. Consumer mode is everything below and is unchanged; this branch only
     # ever engages for a document that is itself the canonical pool. `auto` errs toward
