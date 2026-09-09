@@ -63,6 +63,8 @@ on:
           without a default: `uv tool install git+...@main` resolves at INSTALL time, so a
           floating ref silently changes the closing logic under a caller that changed
           nothing (Blazing-Back akash-runner.yml:135 documents the same trap). Pin a SHA.
+          Coordinated adoption requires a merged reader supporting --ownership-register
+          (just-akash PR #317); older pins reject the flag and fail the sweep.
         required: true
         type: string
       execute:
@@ -136,6 +138,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   reap:
@@ -186,6 +189,8 @@ jobs:
         id: sweep
         env:
           AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          CALLER_REPOSITORY: ${{ github.repository }}
           # ⛔ THROUGH env AND COMPARED FOR EQUALITY BELOW. Two measured traps meet here and
           # both produce a LIVE CLOSE from something that reads like a dry run:
           #   * `DRY_RUN=1` parses as false when the test is `== "true"` (Blazing-Back #1581)
@@ -213,6 +218,12 @@ jobs:
           else
             MODE=(--reap-runners --placement-prefix "$PLACEMENT_PREFIX")
           fi
+          # The caller declares its existing prefix; ownership is bound to the actual
+          # caller repository, never a separately supplied repository input. JSON is
+          # encoded from environment values and passed as one argument to the reader.
+          # Callers must grant actions:read for the reader's authenticated run lookup.
+          OWNERSHIP_REGISTER=$(python3 -c 'import json,os; print(json.dumps({os.environ["PLACEMENT_PREFIX"]: os.environ["CALLER_REPOSITORY"]}))')
+          MODE+=(--ownership-register "$OWNERSHIP_REGISTER")
           # ⭐ SAME LESSON AS `--reap-runners` DIRECTLY BELOW, ONE CLASS WIDER. Without the
           # flag, every non-runner service returns LEAVE-real-or-unknown and the sweep cannot
           # reach the population it exists for — it just prints a clean total. Compared as a

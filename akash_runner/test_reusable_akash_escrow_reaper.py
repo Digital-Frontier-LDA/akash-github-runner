@@ -28,7 +28,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-WF = Path(__file__).resolve().parents[1] / ".github/workflows/reusable-akash-escrow-reaper.yml"
+WF = (
+    Path(__file__).resolve().parents[1]
+    / ".github/workflows/reusable-akash-escrow-reaper.yml"
+)
 
 
 def _sweep_script() -> str:
@@ -48,7 +51,9 @@ def _sweep_executable() -> str:
     retargets onto the paragraph describing it, and then it can never fail.
     """
     return "\n".join(
-        line for line in _sweep_script().splitlines() if not line.lstrip().startswith("#")
+        line
+        for line in _sweep_script().splitlines()
+        if not line.lstrip().startswith("#")
     )
 
 
@@ -69,7 +74,7 @@ def _run(
         textwrap.dedent(f"""\
         #!/bin/bash
         printf '%s\\n' "$*" >> "{tmp_path}/argv.txt"
-        {'echo "' + stale_line + '"' if stale_line else ':'}
+        {'echo "' + stale_line + '"' if stale_line else ":"}
         echo "{closed_line}"
         exit {sweep_rc}
         """)
@@ -83,16 +88,23 @@ def _run(
         **({"REAP_OWNED": reap_owned} if reap_owned is not None else {}),
         "PLACEMENT_PREFIX": prefix,
         "AKASH_API_KEY": "stub",
+        "GH_TOKEN": "offline-token",
+        "CALLER_REPOSITORY": "example/consumer",
         "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
         "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.txt"),
     }
-    proc = subprocess.run(["bash", "-c", _sweep_script()], env=env, capture_output=True, text=True)
-    argv = (tmp_path / "argv.txt").read_text() if (tmp_path / "argv.txt").exists() else ""
+    proc = subprocess.run(
+        ["bash", "-c", _sweep_script()], env=env, capture_output=True, text=True
+    )
+    argv = (
+        (tmp_path / "argv.txt").read_text() if (tmp_path / "argv.txt").exists() else ""
+    )
     out = (tmp_path / "out.txt").read_text() if (tmp_path / "out.txt").exists() else ""
     return proc, argv, out
 
 
 # ── 1. a dry run must stay dry, across all three input shapes ────────────────────────────
+
 
 @pytest.mark.parametrize("execute", ["false", "", "False", "0", "1", "TRUE"])
 def test_only_the_literal_true_closes(tmp_path, execute):
@@ -102,17 +114,22 @@ def test_only_the_literal_true_closes(tmp_path, execute):
     "False"/"TRUE" are case variants a hand-written dispatch produces.
     """
     _, argv, _ = _run(tmp_path, execute=execute)
-    assert "--execute" not in argv, f"EXECUTE={execute!r} passed --execute — a dry run closed deployments"
+    assert "--execute" not in argv, (
+        f"EXECUTE={execute!r} passed --execute — a dry run closed deployments"
+    )
 
 
 def test_the_literal_true_does_close(tmp_path):
     """Anti-vacuity for the test above: if nothing ever closed, every assertion there would
     pass while the workflow was inert."""
     _, argv, _ = _run(tmp_path, execute="true")
-    assert "--execute" in argv, "EXECUTE=true did NOT pass --execute — the reaper cannot close"
+    assert "--execute" in argv, (
+        "EXECUTE=true did NOT pass --execute — the reaper cannot close"
+    )
 
 
 # ── 2. the flag without which this cannot reach its own population ───────────────────────
+
 
 @pytest.mark.parametrize("execute", ["true", "false", ""])
 def test_reap_runners_is_unconditional(tmp_path, execute):
@@ -124,6 +141,7 @@ def test_reap_runners_is_unconditional(tmp_path, execute):
 
 
 # ── 3. a failed sweep is an UNSWEPT account, not a clean one ─────────────────────────────
+
 
 def test_a_failing_sweep_fails_the_step(tmp_path):
     proc, _, _ = _run(tmp_path, execute="true", sweep_rc=3)
@@ -141,17 +159,23 @@ def test_a_successful_sweep_passes(tmp_path):
 
 # ── the reported count must come from the sweep, not be assumed ──────────────────────────
 
+
 def test_closed_count_is_read_from_the_sweep_output(tmp_path):
     _, _, out = _run(tmp_path, execute="true", closed_line="closed=7 failed=0")
-    assert "closed=7" in out, f"the step output did not carry the sweep's own count: {out!r}"
+    assert "closed=7" in out, (
+        f"the step output did not carry the sweep's own count: {out!r}"
+    )
 
 
 def test_a_sweep_that_closed_nothing_reports_zero_not_blank(tmp_path):
-    _, _, out = _run(tmp_path, execute="false", closed_line="(no closes on a report run)")
+    _, _, out = _run(
+        tmp_path, execute="false", closed_line="(no closes on a report run)"
+    )
     assert "closed=0" in out, f"a report-only run must emit closed=0, got {out!r}"
 
 
 # ── the workflow's own shape ─────────────────────────────────────────────────────────────
+
 
 def test_execute_defaults_to_report():
     doc = yaml.safe_load(WF.read_text())
@@ -167,7 +191,9 @@ def test_just_akash_ref_is_required_with_no_default():
     call = doc[True]["workflow_call"] if True in doc else doc["on"]["workflow_call"]
     ref = call["inputs"]["just-akash-ref"]
     assert ref["required"] is True
-    assert "default" not in ref, "a default ref would let the closing logic drift silently"
+    assert "default" not in ref, (
+        "a default ref would let the closing logic drift silently"
+    )
 
 
 def test_the_workflow_declares_no_schedule():
@@ -190,11 +216,16 @@ def test_pipefail_is_set_in_the_sweep():
     guard gets deleted as dead weight and takes the real one with it.
     """
     script = _sweep_executable()
-    assert "pipefail" in script, "pipefail dropped — `$?` after the pipe becomes tee's 0"
-    assert "PIPESTATUS[0]" in script, "PIPESTATUS dropped — the rc guard now rests on pipefail alone"
+    assert "pipefail" in script, (
+        "pipefail dropped — `$?` after the pipe becomes tee's 0"
+    )
+    assert "PIPESTATUS[0]" in script, (
+        "PIPESTATUS dropped — the rc guard now rests on pipefail alone"
+    )
 
 
 # ── the ownership prefix must reach the mechanism, and blank must be refused ──────────
+
 
 @pytest.mark.parametrize("execute", ["true", "false", ""])
 def test_the_placement_prefix_is_passed_through(tmp_path, execute):
@@ -230,7 +261,9 @@ def test_the_prefix_input_is_required_with_no_default():
     call = doc[True]["workflow_call"] if True in doc else doc["on"]["workflow_call"]
     spec = call["inputs"]["placement-prefix"]
     assert spec["required"] is True
-    assert "default" not in spec, "a default prefix makes an inert adoption the easy path"
+    assert "default" not in spec, (
+        "a default prefix makes an inert adoption the easy path"
+    )
 
 
 # ── the reap-owned flag: argv-pinned, both directions ─────────────────────────────────
