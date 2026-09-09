@@ -72,7 +72,13 @@ def _pool(inputs=None, secrets=None, outputs=None, jobs=None):
         "jobs": jobs
         if jobs is not None
         else {
-            "pool": {"runs-on": "ubuntu-latest"},
+            "pool": {
+                "runs-on": "ubuntu-latest",
+                "outputs": {"dseq": "${{ steps.provision.outputs.dseq }}"},
+                "steps": [
+                    {"id": "provision", "run": 'echo "dseq=1" >> "$GITHUB_OUTPUT"'}
+                ],
+            },
             "teardown": {
                 "needs": ["pool"],
                 "if": "always() && needs.pool.result != 'success'",

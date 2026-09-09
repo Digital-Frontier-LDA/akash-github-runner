@@ -87,6 +87,41 @@ def _receives_identity(job: dict[str, Any], producer: str, identity: str) -> boo
     )
 
 
+def _producer_exports_identity(job: dict[str, Any], identity: str) -> bool:
+    """Require a real job output wired to one existing producing step.
+
+    This validates wiring, not runtime execution. check_teardown_can_identify
+    separately checks early emission where shell identity assignments are visible.
+    """
+    outputs = job.get("outputs")
+    if not isinstance(outputs, dict):
+        return False
+    match = re.fullmatch(
+        rf"\s*\$\{{\{{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.{re.escape(identity)}\s*\}}\}}\s*",
+        _text(outputs.get(identity)),
+    )
+    if not match:
+        return False
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        return False
+    sources = [
+        step for step in steps if isinstance(step, dict) and step.get("id") == match[1]
+    ]
+    return len(sources) == 1 and bool(sources[0].get("run") or sources[0].get("uses"))
+
+
+def _supported_closer(job: dict[str, Any]) -> bool:
+    """A teardown-shaped name cannot substitute for the canonical close operation."""
+    target = _text(job.get("uses"))
+    return target == "./.github/workflows/runner-teardown.yml" or bool(
+        re.fullmatch(
+            r"Digital-Frontier-LDA/just-akash/\.github/workflows/runner-teardown\.yml@(?:[0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+)",
+            target,
+        )
+    )
+
+
 def rollback_jobs(document: dict[str, Any]) -> set[str]:
     """Names justified by resource-output wiring and rollback semantics, never a name allowlist."""
     jobs = document.get("jobs") or {}
@@ -95,6 +130,8 @@ def rollback_jobs(document: dict[str, Any]) -> set[str]:
         for producer in _published_identities(document).values()
         for name, job in jobs.items()
         if producer in jobs
+        and _producer_exports_identity(jobs[producer], "dseq")
+        and _supported_closer(job)
         and producer in _needs(job)
         and rollback_condition(job.get("if"), producer)
         and _receives_identity(job, producer, "dseq")
@@ -113,6 +150,10 @@ def check(document: dict[str, Any]) -> list[str]:
                 f"{identity}: lifecycle output must identify an existing producer job"
             )
             continue
+        if not _producer_exports_identity(jobs[producer], identity):
+            findings.append(
+                f"{producer}: must publish {identity} from an existing producing step output"
+            )
         teardowns = [
             name
             for name, job in jobs.items()
@@ -126,6 +167,10 @@ def check(document: dict[str, Any]) -> list[str]:
             continue
         for name in sorted(teardowns):
             job = jobs.get(name) or {}
+            if not _supported_closer(job):
+                findings.append(
+                    f"{name}: rollback must call the canonical runner-teardown reusable at an immutable ref or local path"
+                )
             if producer not in _needs(job):
                 findings.append(
                     f"{name}: rollback must need {producer!r}, the resource producer"

@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       dseq: ${{ steps.provision.outputs.dseq }}
+    steps:
+      - id: provision
+        run: echo "dseq=1" >> "$GITHUB_OUTPUT"
 """
 
 EARLY_CLOSE_182 = (
