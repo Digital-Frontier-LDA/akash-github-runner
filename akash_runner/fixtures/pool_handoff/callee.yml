@@ -1,0 +1,67 @@
+# Graph extracted from just-akash@0b16405ea5a15eb36c206d4bd21d0a750c7c9e64 runner-pool.yml.
+# Provisioning steps are offline stubs; only rollback predicate is corrected.
+name: Akash runner pool
+'on':
+  workflow_call:
+    inputs:
+      runner-label:
+        required: true
+        type: string
+      tag-prefix:
+        required: true
+        type: string
+      github-org:
+        required: true
+        type: string
+      providers:
+        required: false
+        type: string
+        default: ''
+      just-akash-ref:
+        required: true
+        type: string
+    secrets:
+      AKASH_API_KEY:
+        required: false
+      AKASH_API_KEYS:
+        required: false
+      GH_RUNNER_PAT:
+        required: true
+    outputs:
+      dseq:
+        value: ${{ jobs.pool.outputs.dseq }}
+      runner-targets:
+        value: ${{ jobs.pool.outputs.runner-targets }}
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    outputs:
+      dseq: ${{ steps.provision.outputs.dseq }}
+      wallet_address: ${{ steps.provision.outputs.wallet_address }}
+      runner-targets: ${{ steps.provision.outputs.runner_targets || '["ubuntu-latest"]'
+        }}
+    steps:
+    - id: provision
+      run: 'echo "dseq=1" >> "$GITHUB_OUTPUT"
+
+        echo ''runner_targets=["self-hosted","offline-test"]'' >> "$GITHUB_OUTPUT"
+
+        echo "wallet_address=offline-test" >> "$GITHUB_OUTPUT"
+
+        '
+  teardown:
+    name: Close lease and de-register runners (the pool owns this)
+    needs:
+    - pool
+    if: always() && needs.pool.result != 'success'
+    uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@85f85970c96258c9d31834098e44500c74cc58c1
+    with:
+      dseq: ${{ needs.pool.outputs.dseq }}
+      tag-prefix: ${{ inputs.tag-prefix }}
+      runner-label: ${{ inputs.runner-label }}
+      github-org: ${{ inputs.github-org }}
+      just-akash-ref: ${{ inputs.just-akash-ref }}
+    secrets:
+      AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+      AKASH_API_KEYS: ${{ secrets.AKASH_API_KEYS }}
+      GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}

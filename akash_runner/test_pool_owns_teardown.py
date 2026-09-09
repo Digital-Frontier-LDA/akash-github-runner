@@ -1,11 +1,4 @@
-"""Controls for "a workflow that hands out a lifecycle identity must own its teardown".
-
-Fixtures mirror the REAL just-akash `runner-pool.yml` on two refs, which is a genuine
-known-bad/known-good pair on one file:
-
-    origin/main   jobs = ['pool']              -> no teardown       FAILS
-    PR #182       jobs = ['pool','teardown']   -> needs:[pool], if: always()   PASSES
-"""
+"""Reusable producers roll back failed handoff without retiring successful consumers."""
 
 from __future__ import annotations
 
@@ -31,7 +24,7 @@ jobs:
       dseq: ${{ steps.provision.outputs.dseq }}
 """
 
-FIXED_182 = (
+EARLY_CLOSE_182 = (
     MAIN
     + """  teardown:
     needs: [pool]
@@ -52,8 +45,15 @@ def test_known_bad_a_pool_with_no_teardown_job_fails():
     assert findings and "contains no teardown job" in findings[0]
 
 
-def test_known_good_182_internalised_teardown_passes():
-    assert _c(FIXED_182) == []
+def test_unconditional_internal_teardown_retires_before_handoff_and_fails():
+    assert any("successful handoff" in f for f in _c(EARLY_CLOSE_182))
+
+
+def test_failed_or_cancelled_provisioning_rolls_back():
+    fixed = EARLY_CLOSE_182.replace(
+        "if: always()", "if: always() && needs.pool.result != 'success'"
+    )
+    assert _c(fixed) == []
 
 
 def test_the_population_is_not_empty_which_is_why_this_rule_replaced_the_consumer_one():
@@ -68,29 +68,26 @@ def test_the_population_is_not_empty_which_is_why_this_rule_replaced_the_consume
 
 
 def test_a_teardown_that_does_not_need_the_producer_fails():
-    detached = FIXED_182.replace("    needs: [pool]\n", "")
+    detached = EARLY_CLOSE_182.replace("    needs: [pool]\n", "")
     findings = _c(detached)
     assert any("must need 'pool'" in f for f in findings)
 
 
 def test_a_result_gated_teardown_fails():
-    gated = FIXED_182.replace(
+    gated = EARLY_CLOSE_182.replace(
         "if: always()", "if: always() && needs.pool.result == 'success'"
     )
     findings = _c(gated)
-    assert any("must not be gated on a job result" in f for f in findings)
+    assert any("internal rollback must use" in f for f in findings)
 
 
 def test_a_teardown_preconditioned_on_the_identity_fails():
-    """★★ THE (iv) STRUCTURAL MITIGATION. `runner-teardown.yml` treats an empty dseq as a
-    successful no-op ("Empty is a no-op, not an error"), so gating on it buys nothing and
-    re-trains the success-gating habit. This is also the pattern `runner-teardown.yml`'s
-    OWN docstring still recommends — the documentation points the wrong way."""
-    precond = FIXED_182.replace(
+    """Identity presence alone does not distinguish successful handoff from rollback."""
+    precond = EARLY_CLOSE_182.replace(
         "if: always()", "if: always() && needs.pool.outputs.dseq != ''"
     )
     findings = _c(precond)
-    assert any("must not be preconditioned on 'dseq'" in f for f in findings)
+    assert any("internal rollback must use" in f for f in findings)
 
 
 def test_a_workflow_publishing_no_lifecycle_identity_is_out_of_scope():

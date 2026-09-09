@@ -51,43 +51,10 @@ defeatable, and the answer is the DIRECTION in which it fails:
 needed to be SOUND. It implements a weaker property that is checkable offline and whose
 failures land on the safe side, and it names that limit rather than implying more.
 
-⛔ WHAT THIS RULE DELIBERATELY DOES NOT CHECK, and why — see #151's assertion (2).
-
-#151 proposes "the teardown is gated on that identity being non-empty, not on the
-provisioning job's result == 'success'". The second half is already enforced by
-`check_pool_owns_teardown.py`, in a STRICTLY STRONGER form: that rule requires the
-teardown to be UNCONDITIONAL, and rejects a precondition on the identity as well as a
-result gate.
-
-⚠ THAT RULE'S PREMISE IS A PROPERTY OF THE TEARDOWN, NOT OF WORKFLOWS GENERALLY — and a
-repo whose teardown lacks it CANNOT satisfy the unconditional requirement yet. The premise
-is "an empty identity is a safe no-op". MEASURED 2026-08-24, and it splits:
-
-    just-akash   runner-teardown.yml:140   `if [ -z "${DSEQ}" ]` -> "nothing to close"
-                                            no-op. Unconditional teardown is safe.
-    Blazing-Back scripts/ci_close_akash_deployment.sh:43
-                                            `DSEQ="${DSEQ:?DSEQ not set}"` -> exit 1.
-                                            Unconditional teardown FAILS the job on every
-                                            run that never published a dseq.
-
-Blazing-Back's close path is fail-closed BY DESIGN (#1390, "unverifiable is NOT closed"),
-which is correct for a close that was attempted and could not be verified — and wrong for
-a close that was never needed. ⇒ The sequencing for such a repo is: make the close a no-op
-on an EMPTY identity first (nothing to close is not a failure), THEN go unconditional.
-Reversing those two fails every run instead of leaking one lease, so the order is not a
-matter of taste.
-
-⚠ Reproducing that measurement needs the other required env vars set. With CONSOLE_API
-unset the script exits 1 at line 41 for an unrelated reason, and reading that as "it
-fail-closes on DSEQ" confirms the right conclusion from the wrong evidence.
-
-⇒ So requiring an identity gate here would REJECT what the merged rule REQUIRES, and
-every conforming repo would fail one of the two, forever. It would also reintroduce the
-defect: `if: needs.pool.outputs.dseq != ''` SKIPS the teardown exactly when the identity
-is empty — which is precisely when a lease has leaked. #151 says as much itself: "(2)
-without (1) is worse than neither". With (1) enforced here, (2) is unnecessary; without
-it, (2) is harmful. Either way the gate is wrong, so this module implements (1) only and
-leaves the teardown's gating to the rule that already owns it.
+Teardown scheduling is checked separately. Reusable producers roll back failed or
+cancelled provisioning; successful handoff leaves cleanup to the caller after every
+consumer finishes. Both paths still need the identity published before validation can
+fail. Running a closer with an empty identity cannot recover an unpublished lease.
 """
 
 from __future__ import annotations
