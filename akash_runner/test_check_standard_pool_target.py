@@ -103,6 +103,24 @@ def test_a_well_formed_pool_has_no_findings_at_all():
     assert check(_pool()) == []
 
 
+def test_provider_visible_reusable_runner_pat_is_explicitly_nonconformant():
+    pool = _pool()
+    run = pool["jobs"]["pool"]["steps"][0]["run"]
+    pool["jobs"]["pool"]["steps"][0]["run"] = (
+        run + "\nprintf '%s\\n' '  - ACCESS_TOKEN=${GH_RUNNER_PAT}' >> runner-sdl.yaml"
+    )
+    findings = check(pool)
+    assert any("provider-visible ACCESS_TOKEN" in finding for finding in findings)
+
+
+def test_jit_bootstrap_name_does_not_satisfy_pat_guard_by_prose():
+    pool = _pool()
+    pool["jobs"]["pool"]["steps"][0]["name"] = (
+        "Use one-time RUNNER_JIT_CONFIG; never expose GH_RUNNER_PAT"
+    )
+    assert check(pool) == []
+
+
 # ── Pool mode is NOT vacuous: each half of the contract has a known-negative ─────────
 
 

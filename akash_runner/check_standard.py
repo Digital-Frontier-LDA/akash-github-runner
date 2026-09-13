@@ -21,6 +21,7 @@ LIFECYCLE_GATE = (
     "Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@"
 )
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
+PROVIDER_VISIBLE_RUNNER_PAT = re.compile(r"ACCESS_TOKEN\s*=\s*\$\{?GH_RUNNER_PAT\}?")
 
 # ── The pool's side of the same contract ────────────────────────────────────────────
 # Consumer mode (below) requires a consumer to PASS these inputs, MAP these secrets, and
@@ -261,6 +262,14 @@ def _check_pool_contract(document: dict[str, Any]) -> list[str]:
                 f"pool: workflow_call does not publish output {field!r}; consumers "
                 f"dereference needs.<pool>.outputs.{field} and would break silently"
             )
+    serialized = yaml.safe_dump(document, sort_keys=False)
+    if PROVIDER_VISIBLE_RUNNER_PAT.search(serialized):
+        findings.append(
+            "pool: provider-visible ACCESS_TOKEN is derived from reusable GH_RUNNER_PAT; "
+            "current migration requires one-time RUNNER_JIT_CONFIG per runner slot "
+            "(blazing#1018; df-akash-runner main cce642e already enforces it), so this pool is explicitly "
+            "NONCONFORMANT until just-akash phase 2 lands"
+        )
     return findings
 
 
