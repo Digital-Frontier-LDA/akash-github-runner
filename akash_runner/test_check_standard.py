@@ -1,10 +1,13 @@
 from copy import deepcopy
 import json
 
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as _check
 
 
 REF = "v1.43.1"
+TEST_PLACEMENT_IMPLEMENTATIONS = {
+    REF: frozenset({"request_profiles", "per_node_fit"}),
+}
 PROVIDERS = (
     '[{"address":"akash1hgulk6aekakqzc0v6wukrd3dy9n90f5gkl4ezk","preferred":true},'
     '{"address":"akash1z9nr23cgweu45g2jktfx95v7g2xp8qlsa3ys2x","preferred":true},'
@@ -32,6 +35,8 @@ def valid_workflow():
                     "tag-prefix": "ci-example",
                     "github-org": "Borduas-Holdings",
                     "providers": PROVIDERS,
+                    "provider-select": "emptiest",
+                    "just-akash-ref": REF,
                 },
                 "secrets": dict(secrets),
             },
@@ -54,6 +59,15 @@ def valid_workflow():
             },
         }
     }
+
+
+def check(document, target_kind="auto"):
+    """Run the standard with a planted capable ref for lifecycle-focused tests."""
+    return _check(
+        document,
+        target_kind=target_kind,
+        placement_implementations=TEST_PLACEMENT_IMPLEMENTATIONS,
+    )
 
 
 def test_canonical_lifecycle_passes():
