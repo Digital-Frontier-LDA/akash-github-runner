@@ -9,11 +9,19 @@ or the checker's findings) must update the other; the tests are the cross-check.
 """
 
 import json
-from copy import deepcopy
 
 import pytest
 
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as check_standard
+
+
+def check(document, target_kind="auto"):
+    return check_standard(
+        document,
+        target_kind=target_kind,
+        required_contexts={"Akash lifecycle gate"},
+    )
+
 
 REF = "v1.43.1"
 PROVIDERS = (
@@ -63,6 +71,24 @@ def _valid_workflow() -> dict:
                 },
                 "secrets": dict(secrets),
             },
+            "gate": {
+                "name": "Akash lifecycle gate",
+                "needs": ["pool", "teardown"],
+                "if": "${{ always() }}",
+                "steps": [
+                    {
+                        "uses": "Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@"
+                        + "a" * 40,
+                        "with": {
+                            "dseq": "${{ needs.pool.outputs.dseq }}",
+                            "producer-result": "${{ needs.pool.result }}",
+                            "deployment-outcome": "${{ needs.pool.outputs.deployment_outcome }}",
+                            "teardown-result": "${{ needs.teardown.result }}",
+                            "closed": "${{ needs.teardown.outputs.closed }}",
+                        },
+                    }
+                ],
+            },
         }
     }
 
@@ -75,6 +101,7 @@ def _assert_finding_contains(findings: list[str], fragment: str):
 
 # --- Invariant 1: repo-specific tag-prefix is mandatory ----------------------
 
+
 def test_invariant_1_missing_tag_prefix_fails_with_required_input_finding():
     workflow = _valid_workflow()
     workflow["jobs"]["pool"]["with"].pop("tag-prefix")
@@ -83,6 +110,7 @@ def test_invariant_1_missing_tag_prefix_fails_with_required_input_finding():
 
 
 # --- Invariant 3: catch-all local destroy is forbidden -----------------------
+
 
 @pytest.mark.parametrize(
     "command",
@@ -95,7 +123,9 @@ def test_invariant_1_missing_tag_prefix_fails_with_required_input_finding():
 def test_invariant_3_local_close_command_emits_canonical_teardown_finding(command):
     workflow = _valid_workflow()
     workflow["jobs"]["work"]["steps"].append({"run": command})
-    _assert_finding_contains(check(workflow), "local close logic bypasses canonical runner-teardown")
+    _assert_finding_contains(
+        check(workflow), "local close logic bypasses canonical runner-teardown"
+    )
 
 
 def test_invariant_3_close_deployment_action_emits_canonical_teardown_finding():
@@ -109,10 +139,13 @@ def test_invariant_3_close_deployment_action_emits_canonical_teardown_finding():
     # The finding text is constant; the trigger is `close-deployment` in
     # the step's `uses:`. The test asserts the trigger and the finding
     # together: the matcher says the LOCAL close path is forbidden.
-    _assert_finding_contains(check(workflow), "local close logic bypasses canonical runner-teardown")
+    _assert_finding_contains(
+        check(workflow), "local close logic bypasses canonical runner-teardown"
+    )
 
 
 # --- Invariant 4a: if: always() is required ----------------------------------
+
 
 def test_invariant_4a_missing_if_always_emits_teardown_must_use_finding():
     workflow = _valid_workflow()
@@ -121,6 +154,7 @@ def test_invariant_4a_missing_if_always_emits_teardown_must_use_finding():
 
 
 # --- Invariant 4b: complete needs on teardown -------------------------------
+
 
 def test_invariant_4b_new_consumer_must_appear_in_teardown_needs():
     workflow = _valid_workflow()
@@ -139,16 +173,21 @@ def test_invariant_4b_pool_omitted_from_teardown_needs_is_caught():
 
 # --- Pin / identity / credentials match -------------------------------------
 
+
 def test_identity_mismatch_runner_label_emits_exact_match_finding():
     workflow = _valid_workflow()
-    workflow["jobs"]["teardown"]["with"]["runner-label"] = "ci-other-${{ github.run_id }}"
+    workflow["jobs"]["teardown"]["with"]["runner-label"] = (
+        "ci-other-${{ github.run_id }}"
+    )
     _assert_finding_contains(check(workflow), "runner-label must exactly match")
 
 
 def test_credential_mismatch_akash_api_keys_emits_credential_finding():
     workflow = _valid_workflow()
     workflow["jobs"]["teardown"]["secrets"]["AKASH_API_KEYS"] = "${{ secrets.OTHER }}"
-    _assert_finding_contains(check(workflow), "credential field AKASH_API_KEYS must match")
+    _assert_finding_contains(
+        check(workflow), "credential field AKASH_API_KEYS must match"
+    )
 
 
 def test_pool_pin_drift_to_branch_emits_immutable_finding():
@@ -161,13 +200,14 @@ def test_pool_pin_drift_to_branch_emits_immutable_finding():
 
 def test_pool_and_teardown_pin_drift_emits_refs_differ_finding():
     workflow = _valid_workflow()
-    workflow["jobs"]["pool"]["uses"] = (
-        workflow["jobs"]["pool"]["uses"].replace(REF, "v1.42.0")
+    workflow["jobs"]["pool"]["uses"] = workflow["jobs"]["pool"]["uses"].replace(
+        REF, "v1.42.0"
     )
     _assert_finding_contains(check(workflow), "refs differ")
 
 
 # --- Provider policy --------------------------------------------------------
+
 
 def test_provider_policy_exact_three_fleet_required():
     workflow = _valid_workflow()

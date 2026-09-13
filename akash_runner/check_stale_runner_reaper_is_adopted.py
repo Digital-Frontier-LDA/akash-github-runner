@@ -61,8 +61,10 @@ from __future__ import annotations
 import argparse
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import _cli
+import yaml
 
 # ⛔ IMPORTED, NEVER RE-TYPED. If this rule's idea of "registers runners" drifts from
 # `check_dereg_backstop`'s, the two disagree about who is in scope, and a repo can be
@@ -82,6 +84,26 @@ CANONICAL = (
     "Digital-Frontier-LDA/akash-github-runner"
     "/.github/workflows/reusable-stale-runner-reaper.yml"
 )
+CALLER_REPO_EXPR = "${{ github.repository }}"
+
+
+def _canonical_jobs(path: Path) -> list[tuple[str, dict[str, Any]]]:
+    """Parsed canonical call sites; malformed YAML is not valid typed wiring."""
+    try:
+        document = (
+            yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+        )
+    except yaml.YAMLError:
+        return []
+    jobs = document.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return []
+    return [
+        (str(name), job)
+        for name, job in jobs.items()
+        if isinstance(job, dict)
+        and str(job.get("uses") or "").startswith(CANONICAL + "@")
+    ]
 
 
 def _adoptions(text: str) -> list[str]:
@@ -206,6 +228,15 @@ def audit(d: Path) -> tuple[list[str], bool]:
                     f"`@{ref or '<nothing>'}`, not a 40-hex commit. A branch or tag resolves "
                     "at run time, so the reaping behaviour can change under a consumer that "
                     "changed nothing."
+                )
+        for job_name, job in _canonical_jobs(p):
+            actual = str((job.get("with") or {}).get("caller-repo") or "").strip()
+            if actual != CALLER_REPO_EXPR:
+                findings.append(
+                    f"{p.name}:{job_name}: canonical stale-runner reaper must receive "
+                    f"caller-repo: {CALLER_REPO_EXPR}; got {actual or '<missing>'}. "
+                    "A caller-selected or missing repository can classify a foreign/live "
+                    "creator run as terminal."
                 )
     if not adopted:
         findings.append(

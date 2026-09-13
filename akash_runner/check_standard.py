@@ -17,7 +17,11 @@ from check_pool_owns_teardown import check as check_handoff, rollback_jobs
 
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
+LIFECYCLE_GATE = (
+    "Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@"
+)
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
+PROVIDER_VISIBLE_RUNNER_PAT = re.compile(r"ACCESS_TOKEN\s*=\s*\$\{?GH_RUNNER_PAT\}?")
 
 # ── The pool's side of the same contract ────────────────────────────────────────────
 # Consumer mode (below) requires a consumer to PASS these inputs, MAP these secrets, and
@@ -31,7 +35,7 @@ POOL_REQUIRED_INPUTS = ("runner-label", "tag-prefix", "github-org", "providers")
 POOL_REQUIRED_SECRETS = ("AKASH_API_KEY", "AKASH_API_KEYS", "GH_RUNNER_PAT")
 # `dseq` pairs a consumer's teardown (`needs.<pool>.outputs.dseq`); `runner-targets` is
 # what a consumer puts in runs-on. Dropping either silently breaks every consumer.
-POOL_REQUIRED_OUTPUTS = ("dseq", "runner-targets")
+POOL_REQUIRED_OUTPUTS = ("dseq", "deployment_outcome", "runner-targets")
 # ── Teardown predicate rule ─────────────────────────────────────────────────────────
 # A job that tears down / closes / reaps a provisioned resource must not be gated on the
 # PROVISIONER'S RESULT. A provision that creates a lease and then fails or is cancelled
@@ -63,6 +67,93 @@ def _text(value: Any) -> str:
 def _needs(job: dict[str, Any]) -> set[str]:
     value = job.get("needs", [])
     return {value} if isinstance(value, str) else set(value or [])
+
+
+def _terminal_jobs(jobs: dict[str, Any]) -> set[str]:
+    """Jobs with no outgoing ``needs`` edge in the resolved workflow graph."""
+    depended_on = {
+        dependency for job in jobs.values() for dependency in _needs(job or {})
+    }
+    return set(jobs) - depended_on
+
+
+def _lifecycle_gate_findings(
+    jobs: dict[str, Any],
+    pool_name: str,
+    teardown_name: str,
+    required_contexts: set[str],
+) -> list[str]:
+    """Require one terminal, typed, fail-closed merge gate for a pool lifecycle."""
+    closed_expr = f"${{{{ needs.{teardown_name}.outputs.closed }}}}"
+    result_expr = f"${{{{ needs.{teardown_name}.result }}}}"
+    dseq_expr = f"${{{{ needs.{pool_name}.outputs.dseq }}}}"
+    producer_result_expr = f"${{{{ needs.{pool_name}.result }}}}"
+    deployment_outcome_expr = f"${{{{ needs.{pool_name}.outputs.deployment_outcome }}}}"
+    verifiers = {}
+    for name, job in jobs.items():
+        steps = (job or {}).get("steps") or []
+        candidates = [
+            step
+            for step in steps
+            if _text((step or {}).get("uses")).startswith(LIFECYCLE_GATE)
+        ]
+        if candidates:
+            verifiers[name] = candidates
+    gates = set(verifiers) & _terminal_jobs(jobs)
+    if len(gates) != 1:
+        return [
+            f"{pool_name}: expected exactly one terminal merge-ready gate consuming "
+            f"{teardown_name}.outputs.closed, found {len(gates)}"
+        ]
+
+    gate_name = next(iter(gates))
+    gate = jobs[gate_name]
+    findings: list[str] = []
+    if teardown_name not in _needs(gate) or pool_name not in _needs(gate):
+        findings.append(
+            f"{gate_name}: merge-ready gate must directly need {pool_name} and {teardown_name}"
+        )
+    if "always()" not in _text(gate.get("if")):
+        findings.append(f"{gate_name}: merge-ready gate must use if: always()")
+    display_name = gate.get("name", gate_name)
+    if not isinstance(display_name, str) or "${{" in display_name:
+        findings.append(f"{gate_name}: merge-ready gate name must be a stable literal")
+    elif display_name not in required_contexts:
+        findings.append(
+            f"{gate_name}: terminal typed gate context {display_name!r} is not declared "
+            "in required-contexts.txt; live branch protection remains unmeasured"
+        )
+
+    gate_steps = verifiers[gate_name]
+    if len(gate_steps) != 1:
+        findings.append(
+            f"{gate_name}: merge-ready gate must invoke the canonical lifecycle gate exactly once"
+        )
+        return findings
+    step = gate_steps[0]
+    ref = _ref(_text(step.get("uses")))
+    if not IMMUTABLE.fullmatch(ref):
+        findings.append(
+            f"{gate_name}: canonical lifecycle gate ref {ref!r} is not immutable semver/SHA"
+        )
+    expected = {
+        "dseq": dseq_expr,
+        "producer-result": producer_result_expr,
+        "deployment-outcome": deployment_outcome_expr,
+        "teardown-result": result_expr,
+        "closed": closed_expr,
+    }
+    actual = step.get("with") or {}
+    wrong = sorted(
+        field
+        for field, value in expected.items()
+        if _text(actual.get(field)).strip() != value
+    )
+    if wrong:
+        findings.append(
+            f"{gate_name}: canonical lifecycle gate must receive exact typed wiring for {wrong}"
+        )
+    return findings
 
 
 def _ref(uses: str) -> str:
@@ -171,6 +262,14 @@ def _check_pool_contract(document: dict[str, Any]) -> list[str]:
                 f"pool: workflow_call does not publish output {field!r}; consumers "
                 f"dereference needs.<pool>.outputs.{field} and would break silently"
             )
+    serialized = yaml.safe_dump(document, sort_keys=False)
+    if PROVIDER_VISIBLE_RUNNER_PAT.search(serialized):
+        findings.append(
+            "pool: provider-visible ACCESS_TOKEN is derived from reusable GH_RUNNER_PAT; "
+            "current migration requires one-time RUNNER_JIT_CONFIG per runner slot "
+            "(blazing#1018; df-akash-runner main cce642e already enforces it), so this pool is explicitly "
+            "NONCONFORMANT until just-akash phase 2 lands"
+        )
     return findings
 
 
@@ -204,7 +303,11 @@ def _spends_on_leases(document: dict[str, Any]) -> bool:
     return bool(_LEASE_EVIDENCE.search(json.dumps(document, default=str)))
 
 
-def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
+def check(
+    document: dict[str, Any],
+    target_kind: str = "auto",
+    required_contexts: set[str] | None = None,
+) -> list[str]:
     findings: list[str] = []
     jobs = document.get("jobs") or {}
     pools = {
@@ -339,6 +442,11 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
             continue
 
         teardown_name, teardown = candidates[0]
+        findings.extend(
+            _lifecycle_gate_findings(
+                jobs, pool_name, teardown_name, required_contexts or set()
+            )
+        )
         if _ref(_text(teardown.get("uses"))) != pool_ref:
             findings.append(
                 f"{teardown_name}: pool and teardown just-akash refs differ"
@@ -399,7 +507,25 @@ def main() -> int:
     except (OSError, yaml.YAMLError) as exc:
         print(f"Akash runner standard: could not read workflow: {exc}", file=sys.stderr)
         return 2
-    findings = check(document, target_kind=args.target_kind)
+    declaration = args.workflow.with_name("required-contexts.txt")
+    if (
+        args.workflow.parent.name == "workflows"
+        and args.workflow.parent.parent.name == ".github"
+    ):
+        declaration = args.workflow.parent.parent / "required-contexts.txt"
+    try:
+        required_contexts = {
+            line.strip()
+            for line in declaration.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+    except OSError:
+        required_contexts = set()
+    findings = check(
+        document,
+        target_kind=args.target_kind,
+        required_contexts=required_contexts,
+    )
     # ⚠ The guidance is printed BESIDE the finding, never folded into it: the finding
     # string is pinned verbatim by the characterisation tests in
     # test_teardown_not_result_gated.py and test_no_vacuous_pass.py, and rewording it to
@@ -418,7 +544,18 @@ def main() -> int:
     if findings:
         print(f"Akash runner standard: FAIL ({len(findings)} finding(s))")
         return 1
-    print("Akash runner standard: PASS")
+    if any(
+        _text(job.get("uses")).startswith(POOL)
+        for job in (document.get("jobs") or {}).values()
+    ):
+        print(
+            "::notice title=Live branch protection UNMEASURED::Source conformance confirms "
+            "the lifecycle gate is listed in required-contexts.txt; only a privileged API "
+            "drift guard can confirm protected main actually requires that context."
+        )
+    print(
+        "Akash runner standard: PASS (source contract; not live branch-protection proof)"
+    )
     return 0
 
 

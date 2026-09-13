@@ -1,0 +1,53 @@
+# Typed producer evidence is executable on reachable just-akash main at
+# a5a2fa8d16d0144f7cd494b1ecfd8de3790707b8 (just-akash#345).
+name: Akash lifecycle gate
+description: Publish success only after typed positive teardown proof, or no deployment.
+
+inputs:
+  dseq:
+    description: Producer deployment sequence; empty alone is never no-deployment proof.
+    required: false
+    default: ''
+  producer-result:
+    description: GitHub result of the canonical pool producer job.
+    required: true
+  deployment-outcome:
+    description: 'Typed producer outcome: created, no-deployment, or unknown.'
+    required: true
+  teardown-result:
+    description: GitHub result of the canonical teardown job.
+    required: true
+  closed:
+    description: Typed canonical teardown proof; only lowercase true is positive.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DSEQ: ${{ inputs.dseq }}
+        PRODUCER_RESULT: ${{ inputs.producer-result }}
+        DEPLOYMENT_OUTCOME: ${{ inputs.deployment-outcome }}
+        TEARDOWN_RESULT: ${{ inputs.teardown-result }}
+        CLOSED: ${{ inputs.closed }}
+      run: |
+        set -euo pipefail
+        if [ -z "$DSEQ" ]; then
+          if [ "$PRODUCER_RESULT" = "success" ] && [ "$DEPLOYMENT_OUTCOME" = "no-deployment" ]; then
+            echo "Akash producer returned typed no-deployment proof; closure is non-applicable."
+            exit 0
+          fi
+          echo "::error title=Akash deployment identity is unknown::empty DSEQ lacks typed no-deployment proof"
+          exit 1
+        fi
+        if [ "$DEPLOYMENT_OUTCOME" != "created" ]; then
+          echo "::error title=Akash deployment outcome is inconsistent::nonempty DSEQ requires typed created outcome"
+          exit 1
+        fi
+        if [ "$TEARDOWN_RESULT" != "success" ] || [ "$CLOSED" != "true" ]; then
+          echo "::error title=Akash lifecycle is not closed::teardown did not return typed positive closure proof"
+          exit 1
+        fi
+        echo "Akash lifecycle is closed."

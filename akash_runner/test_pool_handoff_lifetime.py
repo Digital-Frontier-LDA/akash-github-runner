@@ -17,7 +17,16 @@ import pytest
 import yaml
 
 from akash_runner.check_pool_owns_teardown import check as check_handoff
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as check_standard
+
+
+def check(document, target_kind="auto"):
+    return check_standard(
+        document,
+        target_kind=target_kind,
+        required_contexts={"Akash lifecycle gate"},
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).with_name("fixtures") / "pool_handoff"
@@ -33,18 +42,40 @@ def condition_runs(expression, results):
     text = re.sub(r"needs\.([\w-]+)\.result", lambda m: repr(results[m[1]]), text)
     text = text.replace("always()", "True").replace("&&", " and ").replace("||", " or ")
     tree = ast.parse(text, mode="eval")
-    allowed = (
-        ast.Expression,
-        ast.BoolOp,
-        ast.And,
-        ast.Or,
-        ast.Compare,
-        ast.Eq,
-        ast.NotEq,
-        ast.Constant,
-    )
-    assert all(isinstance(node, allowed) for node in ast.walk(tree))
-    return eval(compile(tree, "<fixture condition>", "eval"), {"__builtins__": {}})
+
+    def evaluate(node):
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (bool, str)):
+            return node.value
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.And):
+            return all(bool(evaluate(value)) for value in node.values)
+        if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+            return any(bool(evaluate(value)) for value in node.values)
+        if isinstance(node, ast.Compare):
+            left = evaluate(node.left)
+            for operator, comparator in zip(node.ops, node.comparators, strict=True):
+                right = evaluate(comparator)
+                if isinstance(operator, ast.Eq):
+                    matches = left == right
+                elif isinstance(operator, ast.NotEq):
+                    matches = left != right
+                else:
+                    raise AssertionError(
+                        f"unsupported comparison: {ast.dump(operator)}"
+                    )
+                if not matches:
+                    return False
+                left = right
+            return True
+        raise AssertionError(f"unsupported fixture condition: {ast.dump(node)}")
+
+    return bool(evaluate(tree))
+
+
+def test_fixture_condition_interpreter_rejects_executable_syntax():
+    with pytest.raises(AssertionError, match="unsupported fixture condition"):
+        condition_runs("${{ always() && __import__('os') }}", {})
 
 
 def resolve_output(expression, contexts):
@@ -273,6 +304,7 @@ def test_actual_composite_entry_point_enforces_handoff(tmp_path, name, mutation,
         mutation(document)
     workflow = tmp_path / "workflow.yml"
     workflow.write_text(yaml.safe_dump(document))
+    (tmp_path / "required-contexts.txt").write_text("Akash lifecycle gate\n")
     action_dir = ROOT / ".github/actions/akash-runner-conformance"
     action = yaml.safe_load((action_dir / "action.yml").read_text())
     steps = action["runs"]["steps"]
@@ -293,6 +325,9 @@ def test_actual_composite_entry_point_enforces_handoff(tmp_path, name, mutation,
         },
     )
     assert result.returncode == want, result.stdout + result.stderr
+    if name == "caller" and mutation is None:
+        assert "Live branch protection UNMEASURED" in result.stdout
+        assert "not live branch-protection proof" in result.stdout
     if mutation:
         expected = {
             mutate_internal_close: "successful handoff",
