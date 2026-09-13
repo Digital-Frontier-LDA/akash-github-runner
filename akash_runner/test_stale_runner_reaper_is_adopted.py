@@ -27,7 +27,11 @@ REGISTERS = (
     "on: push\njobs:\n  p:\n    steps:\n"
     "      - run: gh api orgs/o/actions/runners/registration-token -X POST\n"
 )
-ADOPTS = f"on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n    uses: {CANONICAL}@{SHA}\n"
+ADOPTS = (
+    f"on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
+    f"    uses: {CANONICAL}@{SHA}\n"
+    "    with:\n      caller-repo: ${{ github.repository }}\n"
+)
 
 
 def _run(
@@ -81,6 +85,7 @@ def test_the_fleets_own_provenance_comment_does_not_break_adoption(tmp_path):
         "on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
         f"    uses: {CANONICAL}@{SHA}  "
         "# akash-github-runner main @ deadbeef — why this pin\n"
+        "    with:\n      caller-repo: ${{ github.repository }}\n"
     )
     p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": adopts_with_note})
     assert p.returncode == 0, p.stdout
@@ -93,6 +98,7 @@ def test_a_quoted_uses_is_still_adoption(tmp_path):
     quoted = (
         "on:\n  schedule:\n    - cron: '0 */6 * * *'\njobs:\n  r:\n"
         f"    uses: '{CANONICAL}@{SHA}'\n"
+        "    with:\n      caller-repo: ${{ github.repository }}\n"
     )
     p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": quoted})
     assert p.returncode == 0, p.stdout
@@ -111,6 +117,24 @@ def test_a_branch_ref_is_still_rejected_when_it_carries_a_note(tmp_path):
     p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": branch_with_note})
     assert p.returncode == 1, p.stdout
     assert "40-hex" in p.stdout
+
+
+def test_caller_repo_must_be_the_exact_runtime_repository(tmp_path):
+    for value in ("", "other/repo", "${{ github.repository_owner }}/repo"):
+        body = ADOPTS.replace("${{ github.repository }}", value)
+        p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": body})
+        assert p.returncode == 1, p.stdout
+        assert "caller-repo" in p.stdout
+
+
+def test_caller_repo_call_site_mutation_changes_the_verdict(tmp_path):
+    target = "caller-repo: ${{ github.repository }}"
+    assert ADOPTS.count(target) == 1
+    mutant = ADOPTS.replace(target, "caller-repo: foreign/repo")
+    assert mutant != ADOPTS
+    p = _run(tmp_path, {"prov.yml": REGISTERS, "reap.yml": mutant})
+    assert p.returncode == 1
+    assert "foreign/repo" in p.stdout
 
 
 def test_both_adoption_rules_use_one_parser():

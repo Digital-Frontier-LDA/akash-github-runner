@@ -68,6 +68,7 @@
 #       with:
 #         org: my-org
 #         name-prefixes: akash-ci-,akash-integration-
+#         caller-repo: my-org/my-repo
 #         dry-run: false
 #       secrets:
 #         runner-pat: ${{ secrets.GH_RUNNER_PAT }}
@@ -85,6 +86,13 @@ on:
           Comma-separated runner-NAME prefixes this repo owns. REQUIRED and validated
           non-blank: an empty prefix would match every runner in the org, including other
           repos'. Fail-closed rather than reap-everything.
+        required: true
+        type: string
+      caller-repo:
+        description: >-
+          Exact owner/repository that created the registrations. Runner names carry the
+          creator run id; the reaper resolves that id only inside this repository and
+          holds missing, malformed, foreign, live, or unreadable identities.
         required: true
         type: string
       dry-run:
@@ -120,6 +128,7 @@ jobs:
           GH_TOKEN: ${{ secrets.runner-pat }}
           ORG: ${{ inputs.org }}
           PREFIXES: ${{ inputs.name-prefixes }}
+          CALLER_REPO: ${{ inputs.caller-repo }}
           DRY_RUN: ${{ inputs.dry-run }}
           API_FLOOR: ${{ inputs.api-floor }}
         run: |
@@ -160,7 +169,7 @@ jobs:
           #    still fails; only this check sees it.
           set +e
           gh api --paginate "orgs/${ORG}/actions/runners?per_page=100" \
-            --jq '.runners[] | select(.status=="offline" and .busy==false) | "\(.id)\t\(.name)"' \
+            --jq '.runners[] | select(.busy==false) | "\(.id)\t\(.name)"' \
             > /tmp/offline.tsv
           LIST_RC=$?
           set -e
@@ -181,7 +190,7 @@ jobs:
                  "cannot be corroborated. Refusing to report ${OFFLINE} offline as a fact."
             exit 1
           fi
-          echo "listing OK: total=${TOTAL} offline_idle=${OFFLINE}"
+          echo "listing OK: total=${TOTAL} idle=${OFFLINE}"
 
           # Keep only names under an owned prefix. Ownership is the NAME, not presence in the
           # org — the org listing is shared, exactly as an Akash wallet is.
@@ -197,7 +206,7 @@ jobs:
           done < /tmp/offline.tsv
           OWNED="$(wc -l < /tmp/owned.tsv | tr -d ' ')"
 
-          echo "listing=${TOTAL} offline=${OFFLINE} owned_by_us=${OWNED} prefixes=${PREFIXES}"
+          echo "listing=${TOTAL} idle=${OFFLINE} owned_by_us=${OWNED} prefixes=${PREFIXES}"
           echo "per-poll cost for the provisioner at this listing size: ~$(( (TOTAL + 99) / 100 )) REST calls"
 
           if [ "$OWNED" -eq 0 ]; then
@@ -209,9 +218,59 @@ jobs:
             exit 0
           fi
 
+          # ---- creator-run state guard -----------------------------------------------
+          # An idle runner can belong to a queued/in-progress run. Name ownership is
+          # necessary but insufficient: delete only after a typed terminal result from
+          # the exact repository that created it. Every parse/API/repository mismatch is
+          # UNKNOWN and therefore held.
+          : > /tmp/safe.tsv
+          : > /tmp/held.tsv
+          declare -A RUN_STATE=()
+          declare -A RUN_COUNTS=()
+          declare -A PREFIX_COUNTS=()
+          while IFS=$'\t' read -r id name; do
+            [ -n "${id:-}" ] || continue
+            matched_prefix=""
+            for p in "${PFX[@]}"; do
+              p="$(printf '%s' "$p" | tr -d '[:space:]')"
+              case "$name" in "$p"*) matched_prefix="$p"; break ;; esac
+            done
+            PREFIX_COUNTS["${matched_prefix:-unmatched}"]=$(( ${PREFIX_COUNTS["${matched_prefix:-unmatched}"]:-0} + 1 ))
+            RID="$(printf '%s' "$name" | sed -nE 's/.*-(0|[1-9][0-9]{8,11})-[^-]+$/\1/p')"
+            if [ -z "$RID" ]; then
+              printf '%s\t%s\tmalformed-run-id\n' "$id" "$name" >> /tmp/held.tsv
+              continue
+            fi
+            RUN_COUNTS[$RID]=$(( ${RUN_COUNTS[$RID]:-0} + 1 ))
+            if [ -z "${RUN_STATE[$RID]+x}" ]; then
+              STATE="$(gh api "repos/${CALLER_REPO}/actions/runs/${RID}" \
+                --jq '(.status // "?") + "|" + (.conclusion // "?") + "|" + (.repository.full_name // "?")' \
+                2>/dev/null)" || STATE="?"
+              RUN_STATE[$RID]="$STATE"
+            fi
+            case "${RUN_STATE[$RID]}" in
+              completed\|*\|"$CALLER_REPO") printf '%s\t%s\t%s\n' "$id" "$name" "$RID" >> /tmp/safe.tsv ;;
+              *) printf '%s\t%s\t%s\n' "$id" "$name" "$RID" >> /tmp/held.tsv ;;
+            esac
+          done < /tmp/owned.tsv
+          SAFE="$(wc -l < /tmp/safe.tsv | tr -d ' ')"
+          HELD="$(wc -l < /tmp/held.tsv | tr -d ' ')"
+          for p in "${!PREFIX_COUNTS[@]}"; do
+            echo "owned_prefix=${p} count=${PREFIX_COUNTS[$p]}"
+          done
+          for rid in "${!RUN_COUNTS[@]}"; do
+            echo "creator_run=${rid} count=${RUN_COUNTS[$rid]} state=${RUN_STATE[$rid]}"
+          done
+          echo "creator_runs=${#RUN_STATE[@]} terminal=${SAFE} held_or_unreadable=${HELD}"
+
+          if [ "$SAFE" -eq 0 ]; then
+            echo "::notice title=Stale runner reaper::No owned idle registration had a typed terminal creator run; held ${HELD}."
+            exit 0
+          fi
+
           if [ "$DRY_RUN" = "true" ]; then
-            echo "::notice title=Stale runner reaper::DRY RUN — would delete ${OWNED} registration(s)."
-            cut -f2 /tmp/owned.tsv | head -20 | sed 's/^/  would delete: /'
+            echo "::notice title=Stale runner reaper::DRY RUN — would delete ${SAFE} terminal registration(s), held ${HELD}."
+            head -20 /tmp/safe.tsv | cut -f2 | sed 's/^/  would delete: /'
             exit 0
           fi
 
@@ -228,7 +287,7 @@ jobs:
               fi
             fi
             gh api -X DELETE "orgs/${ORG}/actions/runners/${id}" >/dev/null 2>&1 && D=$(( D + 1 ))
-          done < /tmp/owned.tsv
+          done < /tmp/safe.tsv
 
           # ⛔ THE SAME READ AS `TOTAL` ABOVE, AND IT WAS LEFT UNGUARDED. Under
           # `set -euo pipefail` a failed `gh api` in a plain assignment propagates and
@@ -245,5 +304,5 @@ jobs:
                  "never as zero."
             AFTER="$TOTAL"
           fi
-          echo "::notice title=Stale runner reaper::Deleted ${D} of ${OWNED}. Listing ${TOTAL} -> ${AFTER}."\
+          echo "::notice title=Stale runner reaper::Deleted ${D} of ${SAFE} terminal (held ${HELD}). Listing ${TOTAL} -> ${AFTER}."\
                "Provisioner per-poll cost ~$(( (TOTAL + 99) / 100 )) -> ~$(( (AFTER + 99) / 100 )) REST calls."
