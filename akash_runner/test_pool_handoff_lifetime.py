@@ -303,6 +303,9 @@ def test_actual_composite_entry_point_enforces_handoff(tmp_path, name, mutation,
         },
     )
     assert result.returncode == want, result.stdout + result.stderr
+    if name == "caller" and mutation is None:
+        assert "Live branch protection UNMEASURED" in result.stdout
+        assert "not live branch-protection proof" in result.stdout
     if mutation:
         expected = {
             mutate_internal_close: "successful handoff",

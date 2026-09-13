@@ -62,7 +62,7 @@ def test_typed_terminal_advisory_cannot_cover_an_earlier_required_green() -> Non
     }
     assert "teardown" not in workflow["jobs"]["tests"]["needs"]
     findings = check(workflow, required={"Tests"})
-    assert any("is not declared in required-contexts.txt" in f for f in findings)
+    assert any("live branch protection remains unmeasured" in f for f in findings)
 
 
 def test_removing_terminal_edge_is_an_exact_call_site_mutation() -> None:

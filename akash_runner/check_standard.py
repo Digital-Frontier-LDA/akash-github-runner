@@ -118,7 +118,7 @@ def _lifecycle_gate_findings(
     elif display_name not in required_contexts:
         findings.append(
             f"{gate_name}: terminal typed gate context {display_name!r} is not declared "
-            "in required-contexts.txt; an advisory terminal job cannot bind merge readiness"
+            "in required-contexts.txt; live branch protection remains unmeasured"
         )
 
     gate_steps = verifiers[gate_name]
@@ -531,7 +531,18 @@ def main() -> int:
     if findings:
         print(f"Akash runner standard: FAIL ({len(findings)} finding(s))")
         return 1
-    print("Akash runner standard: PASS")
+    if any(
+        _text(job.get("uses")).startswith(POOL)
+        for job in (document.get("jobs") or {}).values()
+    ):
+        print(
+            "::notice title=Live branch protection UNMEASURED::Source conformance confirms "
+            "the lifecycle gate is listed in required-contexts.txt; only a privileged API "
+            "drift guard can confirm protected main actually requires that context."
+        )
+    print(
+        "Akash runner standard: PASS (source contract; not live branch-protection proof)"
+    )
     return 0
 
 
