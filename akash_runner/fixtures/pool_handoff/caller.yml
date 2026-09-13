@@ -52,5 +52,22 @@ jobs:
       AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
       AKASH_API_KEYS: ${{ secrets.AKASH_API_KEYS }}
       GH_RUNNER_PAT: ${{ secrets.GH_RUNNER_PAT }}
+  gate:
+    name: Akash lifecycle gate
+    needs:
+    - pool
+    - teardown
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    env:
+      DSEQ: ${{ needs.pool.outputs.dseq }}
+      TEARDOWN_RESULT: ${{ needs.teardown.result }}
+      CLOSED: ${{ needs.teardown.outputs.closed }}
+    steps:
+    - run: |-
+        set -euo pipefail
+        if [ -z "$DSEQ" ]; then exit 0; fi
+        [ "$TEARDOWN_RESULT" = "success" ]
+        [ "$CLOSED" = "true" ]
 'on':
   pull_request: null

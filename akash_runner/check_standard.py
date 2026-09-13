@@ -65,6 +65,106 @@ def _needs(job: dict[str, Any]) -> set[str]:
     return {value} if isinstance(value, str) else set(value or [])
 
 
+def _terminal_jobs(jobs: dict[str, Any]) -> set[str]:
+    """Jobs with no outgoing ``needs`` edge in the resolved workflow graph."""
+    depended_on = {
+        dependency for job in jobs.values() for dependency in _needs(job or {})
+    }
+    return set(jobs) - depended_on
+
+
+def _proof_binding(job: dict[str, Any], expression: str) -> str | None:
+    """Return the environment name bound exactly to one typed lifecycle expression."""
+    scopes = [job.get("env") or {}]
+    scopes.extend((step or {}).get("env") or {} for step in job.get("steps") or [])
+    names = {
+        name
+        for scope in scopes
+        if isinstance(scope, dict)
+        for name, value in scope.items()
+        if _text(value).strip() == expression
+    }
+    return next(iter(names)) if len(names) == 1 else None
+
+
+def _shell_requires(run: str, variable: str, expected: str) -> bool:
+    """Whether fail-fast shell code requires ``$variable`` to equal a literal."""
+    if not re.search(r"(?m)^\s*set\s+-[^\n]*e[^\n]*$", run):
+        return False
+    value = rf"(?:\$\{{{re.escape(variable)}\}}|\${re.escape(variable)})"
+    return bool(
+        re.search(
+            rf"\[\[?\s*[\"']?{value}[\"']?\s*(?:==|=)\s*[\"']{expected}[\"']\s*\]\]?",
+            run,
+        )
+    )
+
+
+def _lifecycle_gate_findings(
+    jobs: dict[str, Any], pool_name: str, teardown_name: str
+) -> list[str]:
+    """Require one terminal, typed, fail-closed merge gate for a pool lifecycle."""
+    closed_expr = f"${{{{ needs.{teardown_name}.outputs.closed }}}}"
+    result_expr = f"${{{{ needs.{teardown_name}.result }}}}"
+    dseq_expr = f"${{{{ needs.{pool_name}.outputs.dseq }}}}"
+    verifiers = {
+        name
+        for name, job in jobs.items()
+        if closed_expr in json.dumps(job, default=str)
+    }
+    gates = verifiers & _terminal_jobs(jobs)
+    if len(gates) != 1:
+        return [
+            f"{pool_name}: expected exactly one terminal merge-ready gate consuming "
+            f"{teardown_name}.outputs.closed, found {len(gates)}"
+        ]
+
+    gate_name = next(iter(gates))
+    gate = jobs[gate_name]
+    findings: list[str] = []
+    if teardown_name not in _needs(gate) or pool_name not in _needs(gate):
+        findings.append(
+            f"{gate_name}: merge-ready gate must directly need {pool_name} and {teardown_name}"
+        )
+    if "always()" not in _text(gate.get("if")):
+        findings.append(f"{gate_name}: merge-ready gate must use if: always()")
+    display_name = gate.get("name", gate_name)
+    if not isinstance(display_name, str) or "${{" in display_name:
+        findings.append(f"{gate_name}: merge-ready gate name must be a stable literal")
+
+    bindings = {
+        "closed": _proof_binding(gate, closed_expr),
+        "result": _proof_binding(gate, result_expr),
+        "dseq": _proof_binding(gate, dseq_expr),
+    }
+    missing = sorted(key for key, value in bindings.items() if value is None)
+    if missing:
+        findings.append(
+            f"{gate_name}: merge-ready gate must bind typed lifecycle values exactly once: "
+            f"missing {missing}"
+        )
+        return findings
+
+    run = "\n".join(_text(step.get("run")) for step in gate.get("steps") or [])
+    if not (
+        _shell_requires(run, bindings["result"], "success")
+        and _shell_requires(run, bindings["closed"], "true")
+    ):
+        findings.append(
+            f"{gate_name}: merge-ready gate must fail closed unless teardown result == "
+            "'success' and typed closed == 'true'"
+        )
+    dseq_var = bindings["dseq"]
+    if not re.search(
+        rf"if\s+\[\[?\s+-z\s+[\"']?(?:\$\{{{re.escape(dseq_var)}\}}|\${re.escape(dseq_var)})",
+        run,
+    ):
+        findings.append(
+            f"{gate_name}: merge-ready gate must treat only an empty producer DSEQ as non-applicable"
+        )
+    return findings
+
+
 def _ref(uses: str) -> str:
     return uses.rsplit("@", 1)[-1] if "@" in uses else ""
 
@@ -339,6 +439,7 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
             continue
 
         teardown_name, teardown = candidates[0]
+        findings.extend(_lifecycle_gate_findings(jobs, pool_name, teardown_name))
         if _ref(_text(teardown.get("uses"))) != pool_ref:
             findings.append(
                 f"{teardown_name}: pool and teardown just-akash refs differ"

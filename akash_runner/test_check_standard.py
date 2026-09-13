@@ -52,6 +52,21 @@ def valid_workflow():
                 },
                 "secrets": dict(secrets),
             },
+            "gate": {
+                "name": "Akash lifecycle gate",
+                "needs": ["pool", "teardown"],
+                "if": "${{ always() }}",
+                "env": {
+                    "DSEQ": "${{ needs.pool.outputs.dseq }}",
+                    "TEARDOWN_RESULT": "${{ needs.teardown.result }}",
+                    "CLOSED": "${{ needs.teardown.outputs.closed }}",
+                },
+                "steps": [
+                    {
+                        "run": 'set -euo pipefail\nif [ -z "$DSEQ" ]; then exit 0; fi\n[ "$TEARDOWN_RESULT" = "success" ]\n[ "$CLOSED" = "true" ]'
+                    }
+                ],
+            },
         }
     }
 
@@ -79,15 +94,23 @@ def test_always_is_required_and_local_destroy_is_forbidden():
 
 
 def test_every_local_just_akash_close_spelling_is_forbidden():
-    for command in ("just-akash close 1", "just-akash close-all", "just-akash destroy --dseq 1"):
+    for command in (
+        "just-akash close 1",
+        "just-akash close-all",
+        "just-akash destroy --dseq 1",
+    ):
         workflow = valid_workflow()
         workflow["jobs"]["work"]["steps"].append({"run": command})
-        assert any("local close logic" in finding for finding in check(workflow)), command
+        assert any("local close logic" in finding for finding in check(workflow)), (
+            command
+        )
 
 
 def test_pool_and_teardown_must_use_same_immutable_release():
     workflow = valid_workflow()
-    workflow["jobs"]["pool"]["uses"] = workflow["jobs"]["pool"]["uses"].replace(REF, "main")
+    workflow["jobs"]["pool"]["uses"] = workflow["jobs"]["pool"]["uses"].replace(
+        REF, "main"
+    )
     workflow["jobs"]["teardown"]["uses"] = workflow["jobs"]["teardown"]["uses"].replace(
         REF, "v1.42.0"
     )
@@ -102,14 +125,18 @@ def test_identity_and_secret_mismatches_fail():
     workflow["jobs"]["teardown"]["secrets"]["AKASH_API_KEYS"] = "${{ secrets.OTHER }}"
     findings = check(workflow)
     assert any("tag-prefix must exactly match" in finding for finding in findings)
-    assert any("credential field AKASH_API_KEYS must match" in finding for finding in findings)
+    assert any(
+        "credential field AKASH_API_KEYS must match" in finding for finding in findings
+    )
 
 
 def test_secrets_inherit_is_rejected_without_crashing():
     workflow = valid_workflow()
     workflow["jobs"]["pool"]["secrets"] = "inherit"
     workflow["jobs"]["teardown"]["secrets"] = "inherit"
-    assert any("secrets: inherit is not allowed" in finding for finding in check(workflow))
+    assert any(
+        "secrets: inherit is not allowed" in finding for finding in check(workflow)
+    )
 
 
 def test_non_mapping_with_is_reported_without_crashing():
@@ -121,13 +148,17 @@ def test_non_mapping_with_is_reported_without_crashing():
 def test_provider_policy_is_required_and_must_contain_exact_preferred_fleet():
     workflow = valid_workflow()
     workflow["jobs"]["pool"]["with"].pop("providers")
-    assert any("missing required input providers" in finding for finding in check(workflow))
+    assert any(
+        "missing required input providers" in finding for finding in check(workflow)
+    )
 
     workflow = valid_workflow()
     workflow["jobs"]["pool"]["with"]["providers"] = (
         '[{"address":"akash15tl6v6gd0nte0syyxnv57zmmspgju4c3xfmdhk","preferred":true}]'
     )
-    assert any("exactly the three-provider DF fleet" in finding for finding in check(workflow))
+    assert any(
+        "exactly the three-provider DF fleet" in finding for finding in check(workflow)
+    )
 
 
 def test_preferred_provider_cannot_overlap_standing_exclusions():
@@ -142,4 +173,6 @@ def test_standing_exclusion_is_required():
     workflow = valid_workflow()
     providers = [p for p in json.loads(PROVIDERS) if not p.get("runner_deny")]
     workflow["jobs"]["pool"]["with"]["providers"] = json.dumps(providers)
-    assert any("no standing runner_deny exclusions" in finding for finding in check(workflow))
+    assert any(
+        "no standing runner_deny exclusions" in finding for finding in check(workflow)
+    )
