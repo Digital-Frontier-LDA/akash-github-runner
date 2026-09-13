@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 
 import _cli
+import ast
 import json
 import re
+import shlex
 import sys
 
 from typing import Any
@@ -33,9 +35,17 @@ PLACEMENT_IMPLEMENTATIONS: dict[str, frozenset[str]] = {
 PLACEMENT_REQUIRED_CAPABILITIES = frozenset({"request_profiles", "per_node_fit"})
 
 JUST_AKASH_DEPLOY = re.compile(r"\bjust-akash\s+deploy\b")
-PRICE_RANKING = re.compile(
-    r"\b(?:sort_by|min(?:_by)?)\s*\([^)]*\bprice\b", re.I | re.S
+JQ_PRICE_RANKING = re.compile(r"\b(?:sort_by|min_by)\s*\([^)]*\bprice\b", re.I | re.S)
+SHELL_PRICE_RANKING = re.compile(
+    r"(?:\b(?:price|bid)\w*\b[^\n|;]*\|[^\n;]*\bsort\b|"
+    r"\bsort\b[^\n;]*(?:\b(?:price|bid)\w*\b|(?:^|\s)-[^\s]*n[^\s]*\s+[^\s]*(?:price|bid)))",
+    re.I,
 )
+JUST_AKASH_SOURCE = re.compile(
+    r"(?:git\+)?https://github\.com/Digital-Frontier-LDA/just-akash(?:\.git)?@([0-9a-f]{40})(?:\b|#)"
+)
+LITERAL_PROVIDER = re.compile(r"akash1[a-z0-9]+$")
+SHELL_DYNAMIC = re.compile(r"(?:\$|`|[*?\[])")
 
 # ── The pool's side of the same contract ────────────────────────────────────────────
 # Consumer mode (below) requires a consumer to PASS these inputs, MAP these secrets, and
@@ -192,6 +202,219 @@ def _check_pool_contract(document: dict[str, Any]) -> list[str]:
     return findings
 
 
+def _command_substitutions(body: str) -> list[str]:
+    substitutions: list[str] = []
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(body) - 1:
+        char = body[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+            index += 1
+            continue
+        if char == "$" and body[index + 1] == "(" and quote != "'":
+            depth = 1
+            end = index + 2
+            while end < len(body) and depth:
+                if body[end] == "(":
+                    depth += 1
+                elif body[end] == ")":
+                    depth -= 1
+                end += 1
+            if depth == 0:
+                substitutions.append(body[index + 2 : end - 1])
+                index = end
+                continue
+        index += 1
+    return substitutions
+
+
+def _shell_segments(body: str) -> list[list[str]]:
+    """Return executable shell command segments, without interpreting quoted examples."""
+    segments: list[list[str]] = []
+    normalized = re.sub(r"\\\s*\n", " ", body)
+    for line in normalized.splitlines():
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+            lexer.whitespace_split = True
+            tokens = list(lexer)
+        except ValueError:
+            # An unparseable line cannot prove a single-provider exemption. Preserve a
+            # recognizable deploy as one dynamic segment so the caller fails closed.
+            if JUST_AKASH_DEPLOY.search(line):
+                segments.append([line, "$UNPARSEABLE"])
+            continue
+        current: list[str] = []
+        for token in tokens:
+            if token and set(token) <= set(";&|"):
+                if current:
+                    segments.append(current)
+                    current = []
+            else:
+                current.append(token)
+        if current:
+            segments.append(current)
+    for substitution in _command_substitutions(normalized):
+        segments.extend(_shell_segments(substitution))
+    for tokens in list(segments):
+        if not tokens:
+            continue
+        binary = tokens[0].rsplit("/", 1)[-1]
+        if binary in {"bash", "sh", "eval"}:
+            sources = (
+                [tokens[-1]] if binary == "eval" else _flag_values(tokens[1:], "-c")
+            )
+            source = sources[0] if len(sources) == 1 else None
+            if source:
+                segments.extend(_shell_segments(source))
+    return segments
+
+
+def _direct_deploy(tokens: list[str]) -> tuple[int, list[str]] | None:
+    """Locate a just-akash deploy that is a command, not an argument to echo/printf."""
+    for index, token in enumerate(tokens[:-1]):
+        if token.rsplit("/", 1)[-1] != "just-akash" or tokens[index + 1] != "deploy":
+            continue
+        prefix = tokens[:index]
+        # Assignments and these execution wrappers can precede the actual binary. Any
+        # other command name means the text is data (for example `echo "just-akash
+        # deploy ..."`) rather than an executable call site.
+        wrappers = {"env", "command", "exec", "sudo", "time", "uv", "uvx"}
+        assignments_only = all(
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", item) for item in prefix
+        )
+        wrapped = bool(prefix) and prefix[0].rsplit("/", 1)[-1] in wrappers
+        if not prefix or assignments_only or wrapped:
+            return index, tokens[index + 2 :]
+    return None
+
+
+def _flag_values(arguments: list[str], flag: str) -> list[str | None]:
+    values: list[str | None] = []
+    for index, token in enumerate(arguments):
+        if token == flag:
+            values.append(arguments[index + 1] if index + 1 < len(arguments) else None)
+        elif token.startswith(flag + "="):
+            values.append(token.split("=", 1)[1])
+    return values
+
+
+def _eligible_direct_ref(
+    command_prefix: list[str], implementation_inventory: dict[str, frozenset[str]]
+) -> tuple[str | None, frozenset[str]]:
+    if not command_prefix:
+        return None, frozenset()
+    wrapper = command_prefix[0].rsplit("/", 1)[-1]
+    if wrapper == "uvx":
+        wrapper_arguments = command_prefix[1:]
+    elif wrapper == "uv" and command_prefix[1:3] == ["tool", "run"]:
+        wrapper_arguments = command_prefix[3:]
+    else:
+        return None, frozenset()
+    sources = _flag_values(wrapper_arguments, "--from")
+    if len(sources) != 1 or sources[0] is None:
+        return None, frozenset()
+    match = JUST_AKASH_SOURCE.fullmatch(sources[0])
+    if not match:
+        return None, frozenset()
+    ref = match.group(1)
+    return ref, implementation_inventory.get(ref, frozenset())
+
+
+def _executes(tokens: list[str], binary: str) -> bool:
+    if not tokens:
+        return False
+    first = tokens[0].rsplit("/", 1)[-1]
+    if first == binary or (
+        binary == "python" and re.fullmatch(r"python3(?:\.\d+)?", first)
+    ):
+        return True
+    # Command substitution in an assignment executes; a quoted argument to echo does not.
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[0]):
+        return any(
+            re.search(rf"\$\([^)]*\b{re.escape(binary)}\b", token) for token in tokens
+        )
+    return False
+
+
+def _python_ranks_price(source: str) -> bool:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id not in {"min", "sorted"}:
+            continue
+        key = next((item.value for item in node.keywords if item.arg == "key"), None)
+        if not isinstance(key, ast.Lambda):
+            continue
+        if any(
+            isinstance(item, ast.Attribute) and item.attr == "price"
+            for item in ast.walk(key.body)
+        ):
+            return True
+    return False
+
+
+def _python_command_source(tokens: list[str]) -> str | None:
+    for index, token in enumerate(tokens):
+        if token == "-c":
+            return tokens[index + 1] if index + 1 < len(tokens) else None
+        if token.startswith("-c") and len(token) > 2:
+            return token[2:]
+    return None
+
+
+def _executable_price_ranking(body: str, segments: list[list[str]]) -> bool:
+    for tokens in segments:
+        command = " ".join(tokens)
+        if _executes(tokens, "jq") and JQ_PRICE_RANKING.search(command):
+            return True
+        if _executes(tokens, "python"):
+            python_source = _python_command_source(tokens)
+            if python_source is not None and _python_ranks_price(python_source):
+                return True
+        if _executes(tokens, "sort"):
+            if SHELL_PRICE_RANKING.search(command):
+                return True
+
+    # Python passed through a heredoc is executable even though its lines are not shell
+    # commands. Limit this to a Python heredoc opener; a cat/printf documentation fixture
+    # containing the same text remains out of scope.
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        opener = re.search(
+            r"\bpython(?:3(?:\.\d+)?)?\b[^\n]*<<-?\s*['\"]?"
+            r"([A-Za-z_][A-Za-z0-9_]*)",
+            line,
+        )
+        if not opener:
+            continue
+        delimiter = opener.group(1)
+        payload: list[str] = []
+        for candidate in lines[index + 1 :]:
+            if candidate.strip() == delimiter:
+                break
+            payload.append(candidate)
+        if _python_ranks_price("\n".join(payload)):
+            return True
+    return False
+
+
 def _placement_selection_findings(
     document: dict[str, Any],
     pools: dict[str, Any],
@@ -227,30 +450,52 @@ def _placement_selection_findings(
     for job_name, job in (document.get("jobs") or {}).items():
         for step_index, step in enumerate((job or {}).get("steps") or []):
             body = strip_comments(_text((step or {}).get("run")))
-            if PRICE_RANKING.search(body):
+            segments = _shell_segments(body)
+            if _executable_price_ranking(body, segments):
                 findings.append(
                     f"{job_name}: run step {step_index} hand-rolls provider price ranking; "
                     "selection must use the stamped just-akash policy"
                 )
-            # Judge each command independently. Counting flags across an entire run block
-            # would let one conforming deploy donate its --select to a second unsafe one.
-            normalized = re.sub(r"\\\s*\n", " ", body)
-            for line in normalized.splitlines():
-                for deploy in JUST_AKASH_DEPLOY.finditer(line):
-                    command = re.split(r"\s*(?:&&|\|\||;)\s*", line[deploy.start() :], 1)[0]
-                    provider_count = len(
-                        re.findall(r"(?<![\w-])--provider(?:=|\s+)", command)
+            # Judge each executable command independently. Text handed to echo/printf is
+            # not a call site, and one conforming deploy cannot donate flags to another.
+            for tokens in segments:
+                direct = _direct_deploy(tokens)
+                if direct is None:
+                    continue
+                command_index, arguments = direct
+                providers = _flag_values(arguments, "--provider")
+                selections = _flag_values(arguments, "--select")
+                dynamic = any(SHELL_DYNAMIC.search(token) for token in tokens)
+                single_provider = (
+                    len(providers) == 1
+                    and providers[0] is not None
+                    and bool(LITERAL_PROVIDER.fullmatch(providers[0]))
+                    and not dynamic
+                )
+                if single_provider:
+                    continue
+                selects_emptiest = selections == ["emptiest"]
+                if not selects_emptiest:
+                    findings.append(
+                        f"{job_name}: run step {step_index} invokes just-akash deploy "
+                        "without --select emptiest and cannot prove exactly one literal --provider"
                     )
-                    selects_emptiest = bool(
-                        re.search(
-                            r"(?<![\w-])--select(?:=|\s+)['\"]?emptiest\b", command
-                        )
+                    continue
+                direct_ref, capabilities = _eligible_direct_ref(
+                    tokens[:command_index], implementation_inventory
+                )
+                missing = PLACEMENT_REQUIRED_CAPABILITIES - capabilities
+                if direct_ref is None:
+                    findings.append(
+                        f"{job_name}: run step {step_index} multi-provider just-akash deploy "
+                        "is not bound to an exact 40-hex just-akash source ref"
                     )
-                    if not selects_emptiest and provider_count != 1:
-                        findings.append(
-                            f"{job_name}: run step {step_index} invokes just-akash deploy "
-                            "without --select emptiest and does not have exactly one --provider"
-                        )
+                elif missing:
+                    findings.append(
+                        f"{job_name}: run step {step_index} just-akash ref {direct_ref!r} "
+                        "is not stamped for request-aware per-node placement "
+                        f"(missing {sorted(missing)})"
+                    )
     return findings
 
 
