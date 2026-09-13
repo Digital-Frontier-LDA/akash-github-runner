@@ -59,15 +59,11 @@ jobs:
     - teardown
     if: ${{ always() }}
     runs-on: ubuntu-latest
-    env:
-      DSEQ: ${{ needs.pool.outputs.dseq }}
-      TEARDOWN_RESULT: ${{ needs.teardown.result }}
-      CLOSED: ${{ needs.teardown.outputs.closed }}
     steps:
-    - run: |-
-        set -euo pipefail
-        if [ -z "$DSEQ" ]; then exit 0; fi
-        [ "$TEARDOWN_RESULT" = "success" ]
-        [ "$CLOSED" = "true" ]
+    - uses: Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      with:
+        dseq: ${{ needs.pool.outputs.dseq }}
+        teardown-result: ${{ needs.teardown.result }}
+        closed: ${{ needs.teardown.outputs.closed }}
 'on':
   pull_request: null

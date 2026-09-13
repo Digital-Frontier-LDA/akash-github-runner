@@ -1,0 +1,35 @@
+name: Akash lifecycle gate
+description: Publish success only after typed positive teardown proof, or no deployment.
+
+inputs:
+  dseq:
+    description: Producer deployment sequence; empty means provisioning was inapplicable.
+    required: false
+    default: ''
+  teardown-result:
+    description: GitHub result of the canonical teardown job.
+    required: true
+  closed:
+    description: Typed canonical teardown proof; only lowercase true is positive.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DSEQ: ${{ inputs.dseq }}
+        TEARDOWN_RESULT: ${{ inputs.teardown-result }}
+        CLOSED: ${{ inputs.closed }}
+      run: |
+        set -euo pipefail
+        if [ -z "$DSEQ" ]; then
+          echo "Akash lifecycle did not create a deployment; closure is non-applicable."
+          exit 0
+        fi
+        if [ "$TEARDOWN_RESULT" != "success" ] || [ "$CLOSED" != "true" ]; then
+          echo "::error title=Akash lifecycle is not closed::teardown did not return typed positive closure proof"
+          exit 1
+        fi
+        echo "Akash lifecycle is closed."

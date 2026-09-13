@@ -12,7 +12,16 @@ import json
 
 import pytest
 
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as check_standard
+
+
+def check(document, target_kind="auto"):
+    return check_standard(
+        document,
+        target_kind=target_kind,
+        required_contexts={"Akash lifecycle gate"},
+    )
+
 
 REF = "v1.43.1"
 PROVIDERS = (
@@ -66,14 +75,15 @@ def _valid_workflow() -> dict:
                 "name": "Akash lifecycle gate",
                 "needs": ["pool", "teardown"],
                 "if": "${{ always() }}",
-                "env": {
-                    "DSEQ": "${{ needs.pool.outputs.dseq }}",
-                    "TEARDOWN_RESULT": "${{ needs.teardown.result }}",
-                    "CLOSED": "${{ needs.teardown.outputs.closed }}",
-                },
                 "steps": [
                     {
-                        "run": 'set -euo pipefail\nif [ -z "$DSEQ" ]; then exit 0; fi\n[ "$TEARDOWN_RESULT" = "success" ]\n[ "$CLOSED" = "true" ]'
+                        "uses": "Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@"
+                        + "a" * 40,
+                        "with": {
+                            "dseq": "${{ needs.pool.outputs.dseq }}",
+                            "teardown-result": "${{ needs.teardown.result }}",
+                            "closed": "${{ needs.teardown.outputs.closed }}",
+                        },
                     }
                 ],
             },

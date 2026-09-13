@@ -17,6 +17,9 @@ from check_pool_owns_teardown import check as check_handoff, rollback_jobs
 
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
+LIFECYCLE_GATE = (
+    "Digital-Frontier-LDA/akash-github-runner/.github/actions/akash-lifecycle-gate@"
+)
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
 
 # ── The pool's side of the same contract ────────────────────────────────────────────
@@ -73,46 +76,27 @@ def _terminal_jobs(jobs: dict[str, Any]) -> set[str]:
     return set(jobs) - depended_on
 
 
-def _proof_binding(job: dict[str, Any], expression: str) -> str | None:
-    """Return the environment name bound exactly to one typed lifecycle expression."""
-    scopes = [job.get("env") or {}]
-    scopes.extend((step or {}).get("env") or {} for step in job.get("steps") or [])
-    names = {
-        name
-        for scope in scopes
-        if isinstance(scope, dict)
-        for name, value in scope.items()
-        if _text(value).strip() == expression
-    }
-    return next(iter(names)) if len(names) == 1 else None
-
-
-def _shell_requires(run: str, variable: str, expected: str) -> bool:
-    """Whether fail-fast shell code requires ``$variable`` to equal a literal."""
-    if not re.search(r"(?m)^\s*set\s+-[^\n]*e[^\n]*$", run):
-        return False
-    value = rf"(?:\$\{{{re.escape(variable)}\}}|\${re.escape(variable)})"
-    return bool(
-        re.search(
-            rf"\[\[?\s*[\"']?{value}[\"']?\s*(?:==|=)\s*[\"']{expected}[\"']\s*\]\]?",
-            run,
-        )
-    )
-
-
 def _lifecycle_gate_findings(
-    jobs: dict[str, Any], pool_name: str, teardown_name: str
+    jobs: dict[str, Any],
+    pool_name: str,
+    teardown_name: str,
+    required_contexts: set[str],
 ) -> list[str]:
     """Require one terminal, typed, fail-closed merge gate for a pool lifecycle."""
     closed_expr = f"${{{{ needs.{teardown_name}.outputs.closed }}}}"
     result_expr = f"${{{{ needs.{teardown_name}.result }}}}"
     dseq_expr = f"${{{{ needs.{pool_name}.outputs.dseq }}}}"
-    verifiers = {
-        name
-        for name, job in jobs.items()
-        if closed_expr in json.dumps(job, default=str)
-    }
-    gates = verifiers & _terminal_jobs(jobs)
+    verifiers = {}
+    for name, job in jobs.items():
+        steps = (job or {}).get("steps") or []
+        candidates = [
+            step
+            for step in steps
+            if _text((step or {}).get("uses")).startswith(LIFECYCLE_GATE)
+        ]
+        if candidates:
+            verifiers[name] = candidates
+    gates = set(verifiers) & _terminal_jobs(jobs)
     if len(gates) != 1:
         return [
             f"{pool_name}: expected exactly one terminal merge-ready gate consuming "
@@ -131,36 +115,38 @@ def _lifecycle_gate_findings(
     display_name = gate.get("name", gate_name)
     if not isinstance(display_name, str) or "${{" in display_name:
         findings.append(f"{gate_name}: merge-ready gate name must be a stable literal")
-
-    bindings = {
-        "closed": _proof_binding(gate, closed_expr),
-        "result": _proof_binding(gate, result_expr),
-        "dseq": _proof_binding(gate, dseq_expr),
-    }
-    missing = sorted(key for key, value in bindings.items() if value is None)
-    if missing:
+    elif display_name not in required_contexts:
         findings.append(
-            f"{gate_name}: merge-ready gate must bind typed lifecycle values exactly once: "
-            f"missing {missing}"
+            f"{gate_name}: terminal typed gate context {display_name!r} is not declared "
+            "required on protected main; an advisory terminal job cannot bind merge readiness"
+        )
+
+    gate_steps = verifiers[gate_name]
+    if len(gate_steps) != 1:
+        findings.append(
+            f"{gate_name}: merge-ready gate must invoke the canonical lifecycle gate exactly once"
         )
         return findings
-
-    run = "\n".join(_text(step.get("run")) for step in gate.get("steps") or [])
-    if not (
-        _shell_requires(run, bindings["result"], "success")
-        and _shell_requires(run, bindings["closed"], "true")
-    ):
+    step = gate_steps[0]
+    ref = _ref(_text(step.get("uses")))
+    if not IMMUTABLE.fullmatch(ref):
         findings.append(
-            f"{gate_name}: merge-ready gate must fail closed unless teardown result == "
-            "'success' and typed closed == 'true'"
+            f"{gate_name}: canonical lifecycle gate ref {ref!r} is not immutable semver/SHA"
         )
-    dseq_var = bindings["dseq"]
-    if not re.search(
-        rf"if\s+\[\[?\s+-z\s+[\"']?(?:\$\{{{re.escape(dseq_var)}\}}|\${re.escape(dseq_var)})",
-        run,
-    ):
+    expected = {
+        "dseq": dseq_expr,
+        "teardown-result": result_expr,
+        "closed": closed_expr,
+    }
+    actual = step.get("with") or {}
+    wrong = sorted(
+        field
+        for field, value in expected.items()
+        if _text(actual.get(field)).strip() != value
+    )
+    if wrong:
         findings.append(
-            f"{gate_name}: merge-ready gate must treat only an empty producer DSEQ as non-applicable"
+            f"{gate_name}: canonical lifecycle gate must receive exact typed wiring for {wrong}"
         )
     return findings
 
@@ -304,7 +290,11 @@ def _spends_on_leases(document: dict[str, Any]) -> bool:
     return bool(_LEASE_EVIDENCE.search(json.dumps(document, default=str)))
 
 
-def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
+def check(
+    document: dict[str, Any],
+    target_kind: str = "auto",
+    required_contexts: set[str] | None = None,
+) -> list[str]:
     findings: list[str] = []
     jobs = document.get("jobs") or {}
     pools = {
@@ -439,7 +429,11 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
             continue
 
         teardown_name, teardown = candidates[0]
-        findings.extend(_lifecycle_gate_findings(jobs, pool_name, teardown_name))
+        findings.extend(
+            _lifecycle_gate_findings(
+                jobs, pool_name, teardown_name, required_contexts or set()
+            )
+        )
         if _ref(_text(teardown.get("uses"))) != pool_ref:
             findings.append(
                 f"{teardown_name}: pool and teardown just-akash refs differ"
@@ -500,7 +494,25 @@ def main() -> int:
     except (OSError, yaml.YAMLError) as exc:
         print(f"Akash runner standard: could not read workflow: {exc}", file=sys.stderr)
         return 2
-    findings = check(document, target_kind=args.target_kind)
+    declaration = args.workflow.with_name("required-contexts.txt")
+    if (
+        args.workflow.parent.name == "workflows"
+        and args.workflow.parent.parent.name == ".github"
+    ):
+        declaration = args.workflow.parent.parent / "required-contexts.txt"
+    try:
+        required_contexts = {
+            line.strip()
+            for line in declaration.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+    except OSError:
+        required_contexts = set()
+    findings = check(
+        document,
+        target_kind=args.target_kind,
+        required_contexts=required_contexts,
+    )
     # ⚠ The guidance is printed BESIDE the finding, never folded into it: the finding
     # string is pinned verbatim by the characterisation tests in
     # test_teardown_not_result_gated.py and test_no_vacuous_pass.py, and rewording it to

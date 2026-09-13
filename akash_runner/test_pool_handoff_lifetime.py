@@ -17,7 +17,16 @@ import pytest
 import yaml
 
 from akash_runner.check_pool_owns_teardown import check as check_handoff
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as check_standard
+
+
+def check(document, target_kind="auto"):
+    return check_standard(
+        document,
+        target_kind=target_kind,
+        required_contexts={"Akash lifecycle gate"},
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).with_name("fixtures") / "pool_handoff"
@@ -273,6 +282,7 @@ def test_actual_composite_entry_point_enforces_handoff(tmp_path, name, mutation,
         mutation(document)
     workflow = tmp_path / "workflow.yml"
     workflow.write_text(yaml.safe_dump(document))
+    (tmp_path / "required-contexts.txt").write_text("Akash lifecycle gate\n")
     action_dir = ROOT / ".github/actions/akash-runner-conformance"
     action = yaml.safe_load((action_dir / "action.yml").read_text())
     steps = action["runs"]["steps"]
