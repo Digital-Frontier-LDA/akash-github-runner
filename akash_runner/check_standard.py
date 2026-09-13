@@ -118,7 +118,7 @@ def _lifecycle_gate_findings(
     elif display_name not in required_contexts:
         findings.append(
             f"{gate_name}: terminal typed gate context {display_name!r} is not declared "
-            "required on protected main; an advisory terminal job cannot bind merge readiness"
+            "in required-contexts.txt; an advisory terminal job cannot bind merge readiness"
         )
 
     gate_steps = verifiers[gate_name]
