@@ -17,10 +17,21 @@ import pytest
 import yaml
 
 from akash_runner.check_pool_owns_teardown import check as check_handoff
-from akash_runner.check_standard import check
+from akash_runner.check_standard import check as _check
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).with_name("fixtures") / "pool_handoff"
+FIXTURE_REF = "ca353a9c448c068a7d9a15c01ae89d27d396bf36"
+
+
+def check(document, target_kind="auto"):
+    return _check(
+        document,
+        target_kind,
+        placement_implementations={
+            FIXTURE_REF: frozenset({"request_profiles", "per_node_fit"})
+        },
+    )
 
 
 def graph(name):
@@ -263,7 +274,9 @@ def test_rollback_exception_requires_identity_wiring_and_producer_dependency():
         ("callee", mutate_internal_close, 1),
         ("callee", mutate_missing_producer_output, 1),
         ("callee", mutate_noop_rollback, 1),
-        ("caller", None, 0),
+        # The subprocess uses the production capability stamp. No per-node-fit release is
+        # eligible yet, so the otherwise-valid caller must fail closed at that boundary.
+        ("caller", None, 1),
         ("caller", mutate_missing_consumer, 1),
     ],
 )

@@ -8,6 +8,7 @@ jobs:
     uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@ca353a9c448c068a7d9a15c01ae89d27d396bf36
     with:
       just-akash-ref: ca353a9c448c068a7d9a15c01ae89d27d396bf36
+      provider-select: emptiest
       runner-label: ci-example-${{ github.run_id }}
       tag-prefix: ci-example
       github-org: Borduas-Holdings

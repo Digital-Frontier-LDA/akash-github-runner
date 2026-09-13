@@ -14,10 +14,28 @@ from typing import Any
 
 import yaml
 from check_pool_owns_teardown import check as check_handoff, rollback_jobs
+from workflow_corpus import strip_comments
 
 POOL = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@"
 TEARDOWN = "Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@"
 IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
+
+# A ref is eligible for request-aware placement only when the exact immutable just-akash
+# revision has BOTH halves of the fit contract.  Do not infer this from a version number:
+# CI checks consumer repositories out at depth one and cannot inspect another repository's
+# dependency graph.  Add the released just-akash SHA here only after its request-profile
+# wiring pins an akash-lease-core release with aggregate AND per-node fit.
+PLACEMENT_IMPLEMENTATIONS: dict[str, frozenset[str]] = {
+    # just-akash#346 candidate. It derives exact group request profiles, but still pins
+    # akash-lease-core v0.14.0, whose fit policy is aggregate-only (core#48 remains open).
+    "ebf2e37ac786ad1b7a0643625cbe0626131707fa": frozenset({"request_profiles"}),
+}
+PLACEMENT_REQUIRED_CAPABILITIES = frozenset({"request_profiles", "per_node_fit"})
+
+JUST_AKASH_DEPLOY = re.compile(r"\bjust-akash\s+deploy\b")
+PRICE_RANKING = re.compile(
+    r"\b(?:sort_by|min(?:_by)?)\s*\([^)]*\bprice\b", re.I | re.S
+)
 
 # ── The pool's side of the same contract ────────────────────────────────────────────
 # Consumer mode (below) requires a consumer to PASS these inputs, MAP these secrets, and
@@ -174,6 +192,68 @@ def _check_pool_contract(document: dict[str, Any]) -> list[str]:
     return findings
 
 
+def _placement_selection_findings(
+    document: dict[str, Any],
+    pools: dict[str, Any],
+    implementation_inventory: dict[str, frozenset[str]],
+) -> list[str]:
+    """Enforce explicit request-aware placement at every Akash selection site."""
+    findings: list[str] = []
+
+    for name, pool in pools.items():
+        pool_with = pool.get("with") or {}
+        if not isinstance(pool_with, dict):
+            # The pool-contract rule reports the malformed mapping. It cannot satisfy
+            # placement selection merely by being unparseable.
+            pool_with = {}
+        if pool_with.get("provider-select") != "emptiest":
+            findings.append(
+                f"{name}: multi-provider runner-pool must set provider-select to 'emptiest'"
+            )
+
+        pool_ref = _ref(_text(pool.get("uses")))
+        if pool_with.get("just-akash-ref") != pool_ref:
+            findings.append(
+                f"{name}: just-akash-ref must exactly match the runner-pool uses ref"
+            )
+        capabilities = implementation_inventory.get(pool_ref, frozenset())
+        missing = PLACEMENT_REQUIRED_CAPABILITIES - capabilities
+        if missing:
+            findings.append(
+                f"{name}: just-akash ref {pool_ref!r} is not stamped for request-aware "
+                f"per-node placement (missing {sorted(missing)})"
+            )
+
+    for job_name, job in (document.get("jobs") or {}).items():
+        for step_index, step in enumerate((job or {}).get("steps") or []):
+            body = strip_comments(_text((step or {}).get("run")))
+            if PRICE_RANKING.search(body):
+                findings.append(
+                    f"{job_name}: run step {step_index} hand-rolls provider price ranking; "
+                    "selection must use the stamped just-akash policy"
+                )
+            # Judge each command independently. Counting flags across an entire run block
+            # would let one conforming deploy donate its --select to a second unsafe one.
+            normalized = re.sub(r"\\\s*\n", " ", body)
+            for line in normalized.splitlines():
+                for deploy in JUST_AKASH_DEPLOY.finditer(line):
+                    command = re.split(r"\s*(?:&&|\|\||;)\s*", line[deploy.start() :], 1)[0]
+                    provider_count = len(
+                        re.findall(r"(?<![\w-])--provider(?:=|\s+)", command)
+                    )
+                    selects_emptiest = bool(
+                        re.search(
+                            r"(?<![\w-])--select(?:=|\s+)['\"]?emptiest\b", command
+                        )
+                    )
+                    if not selects_emptiest and provider_count != 1:
+                        findings.append(
+                            f"{job_name}: run step {step_index} invokes just-akash deploy "
+                            "without --select emptiest and does not have exactly one --provider"
+                        )
+    return findings
+
+
 # ⛔ THE THIRD SHAPE (#11). The standard had exactly two categories -- `pool` (it IS the
 # canonical just-akash runner pool) and `consumer` (it `uses:` that pool). A workflow that
 # SPENDS MONEY ON AKASH LEASES WITHOUT CONSUMING THE CANONICAL POOL fits neither, so
@@ -204,7 +284,12 @@ def _spends_on_leases(document: dict[str, Any]) -> bool:
     return bool(_LEASE_EVIDENCE.search(json.dumps(document, default=str)))
 
 
-def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
+def check(
+    document: dict[str, Any],
+    target_kind: str = "auto",
+    *,
+    placement_implementations: dict[str, frozenset[str]] | None = None,
+) -> list[str]:
     findings: list[str] = []
     jobs = document.get("jobs") or {}
     pools = {
@@ -226,6 +311,12 @@ def check(document: dict[str, Any], target_kind: str = "auto") -> list[str]:
     # to remove, authored into the fix for it.
     findings.extend(check_handoff(document))
     findings.extend(_result_gated_teardowns(jobs, rollback_jobs(document)))
+    placement_inventory = (
+        PLACEMENT_IMPLEMENTATIONS
+        if placement_implementations is None
+        else placement_implementations
+    )
+    findings.extend(_placement_selection_findings(document, pools, placement_inventory))
 
     # ⇒ POOL MODE. Consumer mode is everything below and is unchanged; this branch only
     # ever engages for a document that is itself the canonical pool. `auto` errs toward
