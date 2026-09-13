@@ -64,7 +64,9 @@ def _pool(inputs=None, secrets=None, outputs=None, jobs=None):
                 "outputs": {
                     k: {"value": "${{ jobs.pool.outputs." + k + " }}"}
                     for k in (
-                        outputs if outputs is not None else ["dseq", "runner-targets"]
+                        outputs
+                        if outputs is not None
+                        else ["dseq", "deployment_outcome", "runner-targets"]
                     )
                 },
             }

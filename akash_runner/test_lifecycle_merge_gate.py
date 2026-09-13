@@ -30,7 +30,14 @@ def _action_run() -> str:
 
 
 def _execute_gate(**values: str) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "DSEQ": "42", "TEARDOWN_RESULT": "success", "CLOSED": "true"}
+    env = {
+        **os.environ,
+        "DSEQ": "42",
+        "PRODUCER_RESULT": "success",
+        "DEPLOYMENT_OUTCOME": "created",
+        "TEARDOWN_RESULT": "success",
+        "CLOSED": "true",
+    }
     env.update(values)
     return subprocess.run(
         ["/bin/bash", "-c", _action_run()],
@@ -99,8 +106,47 @@ def test_unknown_failed_and_cancelled_proof_are_never_merge_ready() -> None:
     assert _execute_gate(TEARDOWN_RESULT="cancelled").returncode != 0
 
 
-def test_empty_dseq_is_the_only_non_applicable_success() -> None:
-    assert _execute_gate(DSEQ="", TEARDOWN_RESULT="skipped", CLOSED="").returncode == 0
+def test_only_typed_successful_no_deployment_is_non_applicable() -> None:
     assert (
-        _execute_gate(DSEQ="42", TEARDOWN_RESULT="skipped", CLOSED="").returncode != 0
+        _execute_gate(
+            DSEQ="",
+            PRODUCER_RESULT="success",
+            DEPLOYMENT_OUTCOME="no-deployment",
+            TEARDOWN_RESULT="skipped",
+            CLOSED="",
+        ).returncode
+        == 0
     )
+    for producer_result, outcome in (
+        ("failure", "no-deployment"),
+        ("cancelled", "no-deployment"),
+        ("success", ""),
+        ("success", "unknown"),
+        ("success", "created"),
+        ("success", "malformed"),
+    ):
+        assert (
+            _execute_gate(
+                DSEQ="",
+                PRODUCER_RESULT=producer_result,
+                DEPLOYMENT_OUTCOME=outcome,
+                TEARDOWN_RESULT="skipped",
+                CLOSED="",
+            ).returncode
+            != 0
+        )
+
+
+def test_nonempty_dseq_requires_created_outcome_and_closure() -> None:
+    assert _execute_gate(DSEQ="42", DEPLOYMENT_OUTCOME="unknown").returncode != 0
+    assert _execute_gate(DSEQ="42", DEPLOYMENT_OUTCOME="no-deployment").returncode != 0
+    assert _execute_gate(DSEQ="42", DEPLOYMENT_OUTCOME="created").returncode == 0
+
+
+def test_bypassing_producer_outcome_wiring_is_detected() -> None:
+    workflow = valid_workflow()
+    wiring = workflow["jobs"]["gate"]["steps"][0]["with"]
+    target = "${{ needs.pool.outputs.deployment_outcome }}"
+    assert list(wiring.values()).count(target) == 1
+    wiring["deployment-outcome"] = "no-deployment"
+    assert any("deployment-outcome" in finding for finding in check(workflow))

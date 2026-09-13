@@ -1,5 +1,5 @@
-# Graph extracted from just-akash@0b16405ea5a15eb36c206d4bd21d0a750c7c9e64 runner-pool.yml.
-# Provisioning steps are offline stubs; only rollback predicate is corrected.
+# Reduced graph extracted from reachable just-akash@a5a2fa8d16d0144f7cd494b1ecfd8de3790707b8 runner-pool.yml.
+# Provisioning steps are offline stubs; lifecycle outputs and rollback predicate mirror that graph.
 name: Akash runner pool
 'on':
   workflow_call:
@@ -30,6 +30,8 @@ name: Akash runner pool
     outputs:
       dseq:
         value: ${{ jobs.pool.outputs.dseq }}
+      deployment_outcome:
+        value: ${{ jobs.pool.outputs.deployment_outcome }}
       runner-targets:
         value: ${{ jobs.pool.outputs.runner-targets }}
 jobs:
@@ -37,6 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       dseq: ${{ steps.provision.outputs.dseq }}
+      deployment_outcome: ${{ steps.provision.outputs.deployment_outcome }}
       wallet_address: ${{ steps.provision.outputs.wallet_address }}
       runner-targets: ${{ steps.provision.outputs.runner_targets || '["ubuntu-latest"]'
         }}
@@ -54,7 +57,7 @@ jobs:
     needs:
     - pool
     if: always() && needs.pool.result != 'success'
-    uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@85f85970c96258c9d31834098e44500c74cc58c1
+    uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@f50cc83698871a0e284bed1447589002dda5fd19
     with:
       dseq: ${{ needs.pool.outputs.dseq }}
       tag-prefix: ${{ inputs.tag-prefix }}

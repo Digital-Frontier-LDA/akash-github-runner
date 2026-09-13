@@ -34,7 +34,7 @@ POOL_REQUIRED_INPUTS = ("runner-label", "tag-prefix", "github-org", "providers")
 POOL_REQUIRED_SECRETS = ("AKASH_API_KEY", "AKASH_API_KEYS", "GH_RUNNER_PAT")
 # `dseq` pairs a consumer's teardown (`needs.<pool>.outputs.dseq`); `runner-targets` is
 # what a consumer puts in runs-on. Dropping either silently breaks every consumer.
-POOL_REQUIRED_OUTPUTS = ("dseq", "runner-targets")
+POOL_REQUIRED_OUTPUTS = ("dseq", "deployment_outcome", "runner-targets")
 # ── Teardown predicate rule ─────────────────────────────────────────────────────────
 # A job that tears down / closes / reaps a provisioned resource must not be gated on the
 # PROVISIONER'S RESULT. A provision that creates a lease and then fails or is cancelled
@@ -86,6 +86,8 @@ def _lifecycle_gate_findings(
     closed_expr = f"${{{{ needs.{teardown_name}.outputs.closed }}}}"
     result_expr = f"${{{{ needs.{teardown_name}.result }}}}"
     dseq_expr = f"${{{{ needs.{pool_name}.outputs.dseq }}}}"
+    producer_result_expr = f"${{{{ needs.{pool_name}.result }}}}"
+    deployment_outcome_expr = f"${{{{ needs.{pool_name}.outputs.deployment_outcome }}}}"
     verifiers = {}
     for name, job in jobs.items():
         steps = (job or {}).get("steps") or []
@@ -135,6 +137,8 @@ def _lifecycle_gate_findings(
         )
     expected = {
         "dseq": dseq_expr,
+        "producer-result": producer_result_expr,
+        "deployment-outcome": deployment_outcome_expr,
         "teardown-result": result_expr,
         "closed": closed_expr,
     }

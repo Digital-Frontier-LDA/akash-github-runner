@@ -70,6 +70,8 @@ def valid_workflow():
                         + "a" * 40,
                         "with": {
                             "dseq": "${{ needs.pool.outputs.dseq }}",
+                            "producer-result": "${{ needs.pool.result }}",
+                            "deployment-outcome": "${{ needs.pool.outputs.deployment_outcome }}",
                             "teardown-result": "${{ needs.teardown.result }}",
                             "closed": "${{ needs.teardown.outputs.closed }}",
                         },
