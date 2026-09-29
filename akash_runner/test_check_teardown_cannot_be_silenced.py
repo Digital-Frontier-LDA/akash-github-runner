@@ -280,3 +280,105 @@ def test_KP_a_close_silenced_on_a_continuation_line_is_flagged(tmp_path: Path) -
     """KP. Same shape for the original criterion: the close continues onto its `|| true`."""
     assert check_workflow(_wf(tmp_path, _CONTINUED_SILENCED_CLOSE)), "continued silenced close not flagged"
 
+
+
+# ── Review of #1553 (DF-infra bead dfinfra-gh1553, REVIEW[run=d41d6ffc]) ──────
+# Every KP below was rc=0 on 88d4b1a0; each KN is a real fleet shape that must stay green
+# now that the rule is ENFORCING on four consumers.
+def _one_step(body: str, extra: str = "") -> str:
+    lines = "\n".join("          " + ln for ln in body.strip("\n").splitlines())
+    return f"name: gate\njobs:\n  gate:\n    steps:\n      - name: reap\n{extra}        run: |\n{lines}\n"
+
+
+_REVIEW_KP = {
+    # HIGH-2: continue-on-error is a silencer the bead's criterion 1 names.
+    "continue_on_error_step": _one_step('just-akash destroy --dseq "$DSEQ" --yes', "        continue-on-error: true\n"),
+    # MED-3: `||` at end of line continues WITHOUT a backslash (bash: `false ||` NL `true` -> 0).
+    "or_newline_true": _one_step('just-akash destroy --dseq "$DSEQ" --yes ||\n  true'),
+    # MED-5: the Console API close as actually invoked.
+    "curl_delete_console": _one_step('curl -fsS -X DELETE "$API/v1/deployments/$DSEQ" || true'),
+    "curl_request_delete": _one_step('curl -fsS "$API/v1/deployments/$DSEQ" --request DELETE || true'),
+    # LOW-6: the other swallow shapes.
+    "or_colon_then_more": _one_step('just-akash destroy --dseq "$DSEQ" --yes || :; echo done'),
+    "or_plain_echo": _one_step('just-akash destroy --dseq "$DSEQ" --yes || echo "close failed"'),
+    "if_not_close_warn": _one_step('if ! just-akash destroy --dseq "$DSEQ" --yes; then echo warn; fi'),
+    "set_plus_e_exit_0": _one_step('set +e\njust-akash destroy --dseq "$DSEQ" --yes\nexit 0'),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_REVIEW_KP))
+def test_KP_review_shapes_are_flagged(tmp_path: Path, name: str) -> None:
+    assert check_workflow(_wf(tmp_path, _REVIEW_KP[name])), f"{name} not flagged"
+
+
+def test_KP_continue_on_error_on_the_JOB_is_flagged(tmp_path: Path) -> None:
+    body = (
+        "name: gate\njobs:\n  gate:\n    continue-on-error: true\n    steps:\n"
+        "      - run: |\n          just-akash destroy --dseq \"$DSEQ\" --yes\n"
+    )
+    assert check_workflow(_wf(tmp_path, body))
+
+
+def test_KP_silenced_install_of_an_opaque_wheel_is_flagged(tmp_path: Path) -> None:
+    """MED-4. The pinned remedy installs `"$whl"`; silencing IT must not pass unflagged."""
+    body = _PINNED_INSTALL.replace('pipx install "$whl"', 'pipx install "$whl" 2>/dev/null || true')
+    found = check_workflow(_wf(tmp_path, body))
+    assert len(found) == 1 and "$whl" in found[0][1], found
+
+
+def test_KP_silenced_install_of_a_git_url_close_tool_is_flagged(tmp_path: Path) -> None:
+    """MED-4, found live: Blazing-Back ci-pr.yml `uv tool install "git+...just-akash@REF" || true`."""
+    body = (
+        "name: gate\njobs:\n  gate:\n    steps:\n      - run: |\n"
+        '          uv tool install "git+https://github.com/Digital-Frontier-LDA/just-akash@${REF}" || true\n'
+        '          just-akash destroy --dseq "$DSEQ" --yes\n'
+    )
+    assert check_workflow(_wf(tmp_path, body))
+
+
+_REVIEW_KN = {
+    # Fails the step anyway.
+    "or_brace_exit_1": _one_step('just-akash destroy --dseq "$DSEQ" --yes || { echo "::error::close failed"; exit 1; }'),
+    "if_not_close_exit_1": _one_step('if ! just-akash destroy --dseq "$DSEQ" --yes; then\n  echo "::error::x"\n  exit 1\nfi'),
+    "set_plus_e_rc_read": _one_step('set +e\njust-akash destroy --dseq "$DSEQ" --yes\nrc=$?\nset -e\n[ "$rc" -eq 0 ] || exit "$rc"'),
+    "set_plus_e_close_last": _one_step('set +e\necho closing\njust-akash destroy --dseq "$DSEQ" --yes'),
+    # Announced, deliberately non-fatal (runner-time-to-ready.yml, blazing akash-ci.yml).
+    "or_echo_warning": _one_step(
+        'uv tool run just-akash destroy --dseq "${dseq}" >/dev/null 2>&1 \\\n'
+        '  || echo "::warning::attempt ${i}: destroy failed for dseq ${dseq} — verify manually, it holds escrow"'
+    ),
+    "curl_delete_or_warning": _one_step(
+        'curl -sf -X DELETE "https://console-api.akash.network/v1/deployments/$DSEQ" -H "x-api-key: $K" '
+        '|| echo "::warning::Failed to close deployment $DSEQ"'
+    ),
+    # df-akash-gate (agr copy): elif close; then ...; else ::error ...; fi.
+    "elif_close_else_error": _one_step(
+        'if [ -z "${DSEQ:-}" ]; then\n  echo "::warning::no dseq"\nelif just-akash destroy --dseq "$DSEQ" --yes; then\n'
+        '  echo "reaped"\nelse\n  echo "::error title=Teardown FAILED::close of ${DSEQ} failed"\nfi\necho done'
+    ),
+    # blazing akash-integration-new.yml: retry loop, verified after, fails with exit 1.
+    "retry_loop_then_verify_exit_1": _one_step(
+        'for attempt in 1 2 3; do\n  if just-akash destroy --dseq "$DSEQ" --yes; then\n    break\n  fi\n'
+        '  sleep 5\ndone\n[ "$(just-akash list --json | jq length)" = 0 ] && exit 0\necho "::error::leaked"\nexit 1'
+    ),
+    # A curl DELETE of something that is not a deployment.
+    "curl_delete_unrelated": _one_step('curl -s -X DELETE "$API/v1/cache/$KEY" || true'),
+    # An install inside `if`, with the close skipped and announced when it fails.
+    "install_in_if_announced": _one_step(
+        'if pipx install "$whl"; then\n  just-akash destroy --dseq "$DSEQ" --yes\nelse\n'
+        '  echo "::warning::install failed — nothing was scanned"\nfi'
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(_REVIEW_KN))
+def test_KN_review_controls_are_not_flagged(tmp_path: Path, name: str) -> None:
+    assert check_workflow(_wf(tmp_path, _REVIEW_KN[name])) == [], name
+
+
+def test_a_missing_or_empty_workflows_dir_fails_closed(tmp_path: Path) -> None:
+    """LOW-7. The rule is ENFORCING and the action never checks the dir exists."""
+    from check_teardown_cannot_be_silenced import main
+
+    assert main(["--workflows-dir", str(tmp_path / "nope")]) == 2
+    assert main(["--workflows-dir", str(tmp_path)]) == 2

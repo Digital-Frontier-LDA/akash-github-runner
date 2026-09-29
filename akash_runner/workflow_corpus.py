@@ -47,6 +47,12 @@ class RunBlock:
     """Verbatim, comments included. For reporting only; do not match against it."""
     code: str
     """Comments BLANKED IN PLACE. Same line count as `script`, so offsets still map."""
+    continue_on_error: bool = False
+    """The step OR its job carries `continue-on-error` that is not literally `false`.
+
+    An expression (`${{ matrix.experimental }}`) counts as True: it CAN be true, and a rule
+    asking "can this step's failure reach the run?" must not assume the favourable value.
+    """
 
 
 def strip_comments(script: str) -> str:
@@ -80,6 +86,13 @@ def _steps_of(node: yaml.Node | None) -> yaml.Node | None:
     return _child(node, "steps")
 
 
+def _continues_on_error(node: yaml.Node | None) -> bool:
+    v = _child(node, "continue-on-error")
+    if v is None:
+        return False
+    return not (isinstance(v, yaml.ScalarNode) and str(v.value).strip().lower() == "false")
+
+
 def run_blocks(path: str | Path) -> list[RunBlock]:
     """Every `run:` script in a workflow OR a composite action, structurally.
 
@@ -105,6 +118,7 @@ def run_blocks(path: str | Path) -> list[RunBlock]:
         steps = _steps_of(container)
         if not isinstance(steps, yaml.SequenceNode):
             continue
+        job_coe = _continues_on_error(container)
         for i, step in enumerate(steps.value):
             run = _child(step, "run")
             if not isinstance(run, yaml.ScalarNode) or not isinstance(run.value, str):
@@ -119,6 +133,7 @@ def run_blocks(path: str | Path) -> list[RunBlock]:
                     start_line=first,
                     script=run.value,
                     code=strip_comments(run.value),
+                    continue_on_error=job_coe or _continues_on_error(step),
                 )
             )
     return out
