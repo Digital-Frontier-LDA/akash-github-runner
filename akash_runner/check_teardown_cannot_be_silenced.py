@@ -42,7 +42,7 @@ from workflow_corpus import RunBlock, run_blocks  # noqa: E402
 _CLOSES_BILLABLE = re.compile(
     r"""(?ix)
     \b(?:
-        just-akash \s+ (?:close|destroy|close-all)      # akash deployment escrow
+        just-akash \s+ (?:close-all|close|destroy-all|destroy)  # akash deployment escrow
       | akash \s+ tx \s+ deployment \s+ close
       | provider-services \s+ tx \s+ deployment \s+ close
       | DELETE \s+ /v1/deployments                       # console api close
@@ -57,6 +57,78 @@ _CLOSES_BILLABLE = re.compile(
 _SWALLOWS_FAILURE = re.compile(r"(\|\|\s*true\b|\|\|\s*:\s*(?:$|\n)|\|\|\s*exit\s+0\b)", re.M)
 
 
+# Criterion 2 of #1553: the close depends on a tool whose INSTALLATION is silenced, so
+# "tool absent" and "nothing to clean" read the same. Measured on df-akash-gate.yml:56 —
+# `pipx install just-akash 2>/dev/null || pip install just-akash 2>/dev/null || true`
+# never installed anything (just-akash is not on PyPI), for as long as the gate existed.
+# Only tools some billable close in the SAME workflow invokes are considered: a silenced
+# install of anything else is a best-effort convenience, not a teardown hazard.
+_CLOSE_TOOL = re.compile(
+    r"\b(just-akash|akash|provider-services|gcloud|kubectl)\b(?=\s+(?:close|destroy|tx|compute|delete))"
+)
+_INSTALLS = re.compile(r"\b(?:pipx|pip3?|uv\s+(?:tool|pip))\s+install\b")
+
+
+def _logical_lines(block: RunBlock) -> list[tuple[int, str, str]]:
+    """(first physical line index, code, verbatim) per LOGICAL shell line.
+
+    A trailing backslash continues a command, so `pipx install just-akash || \\` with
+    `true` on the next line is ONE invocation whose failure is swallowed. Matching
+    physical lines alone would split the install from its `|| true` and miss it — the
+    "select the whole invocation, not a line" constraint #1553 records. Reported at the
+    command's first line.
+    """
+    code = block.code.splitlines()
+    verbatim = block.script.splitlines()
+    out: list[tuple[int, str, str]] = []
+    i = 0
+    while i < len(code):
+        start, parts, vparts = i, [], []
+        while True:
+            line = code[i]
+            vline = verbatim[i] if i < len(verbatim) else line
+            if line.rstrip().endswith("\\") and i + 1 < len(code):
+                parts.append(line.rstrip()[:-1])
+                vparts.append(vline.rstrip()[:-1].rstrip())
+                i += 1
+                continue
+            parts.append(line)
+            vparts.append(vline.strip())
+            i += 1
+            break
+        out.append((start, " ".join(parts), " ".join(p.strip() for p in vparts if p.strip())))
+    return out
+
+
+def _close_tools(blocks: list[RunBlock]) -> set[str]:
+    """Tools the workflow invokes on a billable-close line (comments excluded)."""
+    tools: set[str] = set()
+    for block in blocks:
+        for _, line, _ in _logical_lines(block):
+            if _CLOSES_BILLABLE.search(line):
+                tools.update(m.group(1) for m in _CLOSE_TOOL.finditer(line))
+    return tools
+
+
+def _silenced_installs(block: RunBlock, tools: set[str]) -> list[tuple[int, str]]:
+    """Lines that install a close tool AND swallow their own failure."""
+    out: list[tuple[int, str]] = []
+    if not tools:
+        return out
+    tool_re = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(t) for t in sorted(tools)) + r")(?![\w-])")
+    for i, line, excerpt in _logical_lines(block):
+        if _INSTALLS.search(line) and tool_re.search(line) and _SWALLOWS_FAILURE.search(line):
+            tool = tool_re.search(line).group(0)
+            out.append((
+                block.start_line + i,
+                (
+                    f"the install of `{tool}`, which a billable close in this workflow needs, "
+                    f"swallows its own failure — 'tool absent' then reads as 'nothing to clean': {excerpt}"
+                ),
+            ))
+    return out
+
+
 def _offending_lines(block: RunBlock) -> list[tuple[int, str]]:
     """Lines that BOTH close something billable AND swallow their own failure.
 
@@ -65,21 +137,21 @@ def _offending_lines(block: RunBlock) -> list[tuple[int, str]]:
     human-readable excerpt.
     """
     out: list[tuple[int, str]] = []
-    stripped = block.code.splitlines()
-    verbatim = block.script.splitlines()
-    for i, line in enumerate(stripped):
+    for i, line, excerpt in _logical_lines(block):
         if _CLOSES_BILLABLE.search(line) and _SWALLOWS_FAILURE.search(line):
-            excerpt = verbatim[i].strip() if i < len(verbatim) else line.strip()
             out.append((block.start_line + i, excerpt))
     return out
 
 
 def check_workflow(path: Path) -> list[tuple[int, str]]:
-    """Every silenced-close line in one workflow or composite action."""
+    """Every silenced-close line, and every silenced install of a close tool, in one file."""
     findings: list[tuple[int, str]] = []
-    for block in run_blocks(path):
+    blocks = list(run_blocks(path))
+    tools = _close_tools(blocks)
+    for block in blocks:
         findings.extend(_offending_lines(block))
-    return findings
+        findings.extend(_silenced_installs(block, tools))
+    return sorted(findings)
 
 
 def main(argv: list[str] | None = None) -> int:
