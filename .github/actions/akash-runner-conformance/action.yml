@@ -203,6 +203,7 @@ runs:
           check_dereg_backstop.py
           check_backstop_covers_producers.py
           check_context_properties_exist.py
+          check_teardown_cannot_be_silenced.py
         )
         DIR_SCOPED_ADVISORY=(
           check_provisioning_is_delegated.py
@@ -212,7 +213,6 @@ runs:
           check_schedule_inputs_are_empty.py
           check_unvalidated_default.py
           check_funding_projection_is_quantised.py
-          check_teardown_cannot_be_silenced.py
           check_test_pins_a_literal.py
           check_pool_not_before_consumers.py
           check_runner_image_digest_floor.py
@@ -315,6 +315,12 @@ runs:
           # 1). The rule's scope is documented in
           # akash_runner/test_every_rule_has_a_call_site.py (ENFORCING entry).
           python3 "$ROOT/check_context_properties_exist.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
+          # ⭐ PROMOTED TO ENFORCING 2026-09-29. A teardown that closes a billable resource
+          # must be able to fail, and so must the install of the tool it closes with.
+          # Every consumer scanned clean on origin/main (Blazing-Back 75, blazing 38,
+          # df-cicd 34, just-akash 15); the one true finding was FIXED (df-cicd #178,
+          # #359). Scope: akash_runner/test_every_rule_has_a_call_site.py (ENFORCING entry).
+          python3 "$ROOT/check_teardown_cannot_be_silenced.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
           # ⛔ ${VAR:-default} substitutes ONLY when VAR is unset or EMPTY — a
           # non-numeric set value like `abc` passes straight through and reaches
           # the numeric comparison as `abc`, a bash SYNTAX ERROR. Measured today
@@ -323,7 +329,6 @@ runs:
           # akash_runner/test_every_rule_has_a_call_site.py (ADVISORY entry).
           advisory check_unvalidated_default.py --workflows-dir "$WORKFLOWS_DIR"
           advisory check_funding_projection_is_quantised.py --workflows-dir "$WORKFLOWS_DIR"
-          advisory check_teardown_cannot_be_silenced.py --workflows-dir "$WORKFLOWS_DIR"
           # ⛔ `uses:@sha` picks the CONTRACT, `checker-ref` picks the CHECKER. Two
           # declarations of one decision, and the invariant lived only in a comment in
           # the caller's own file. A half-bump runs an old contract against a new

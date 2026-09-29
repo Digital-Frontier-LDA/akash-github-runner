@@ -30,6 +30,16 @@ RULES_DIR = ROOT / "akash_runner"
 
 # Rules whose failure FAILS the consumer's build.
 ENFORCING = {
+    # ⭐ PROMOTED 2026-09-29. Its PROMOTE WHEN was "every consumer workflows-dir has been
+    # scanned and every finding is TRUE and either fixed or exempted-with-a-reason".
+    # Measured on origin/main of each: Blazing-Back 75 workflows PASS, blazing 38 PASS,
+    # df-cicd 34 PASS, just-akash 15 PASS, this repo PASS. The one historical finding was
+    # TRUE and is FIXED, not exempted: df-akash-gate.yml's silenced close (#178) and its
+    # silenced install of a binary PyPI never had (df-cicd#359, which also found the reap
+    # called a `close` subcommand just-akash does not have). Criterion 2 of #1553 (a
+    # silenced install of the close tool) and logical-line matching landed in #79.
+    # Known-positives still fire: the verbatim df-akash-gate.yml:56 and :82 fixtures.
+    "check_teardown_cannot_be_silenced.py",
     # ⭐ PROMOTED 2026-08-30. Its advisory period did exactly what an advisory period is for:
     # the rule shipped with the canonical workflow, no consumer had a SHA to pin, and it
     # correctly reported 2 of 2 in-scope repos failing. Both now satisfy it —
@@ -183,21 +193,6 @@ ADVISORY: dict[str, str] = {
         "on at least one real conformance run there. Blast radius already measured at "
         "zero across all four repos: just-akash OK, df-cicd OK, akash-github-runner and "
         "Blazing-Back NOT-JUDGEABLE (no caller)."
-    ),
-    "check_teardown_cannot_be_silenced.py": (
-        "ADVISORY until every consumer has been scanned. It currently finds exactly ONE "
-        'instance repo-wide -- df-akash-gate.yml:82, `[ -n "${DSEQ:-}" ] && just-akash '
-        'close "$DSEQ" 2>/dev/null || true` -- which is a genuine guaranteed no-op: there '
-        "is no just-akash package on PyPI, so the install two lines up (also silenced) has "
-        "never placed a binary, and the shell shape exits 0 in all three failure modes. "
-        "Mutation-verified on three limbs, each killed by its own known-negative. "
-        "⚠ What is NOT measured is its false-positive rate across the OTHER consumers "
-        "(Blazing-Back, blazing, just-akash), which carry far more teardown code than "
-        "df-cicd does. `|| true` is correct on a diagnostic, and a rule that reds a "
-        "correct design trains readers to dismiss it. "
-        "PROMOTE WHEN: every consumer workflows-dir has been scanned and every finding is "
-        "TRUE and either fixed or exempted-with-a-reason -- an untrue finding is a defect "
-        "in the RULE and is never exemptible."
     ),
     "check_gate_is_not_re_derived.py": (
         "ADVISORY until a consumer actually adopts the capacity primitive. Blast radius "

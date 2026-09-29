@@ -96,7 +96,7 @@ examined each). Two report real defects, both ADVISORY:
 
 | rule | finding |
 |---|---|
-| `check_teardown_cannot_be_silenced` | `df-akash-gate.yml:82` — `[ -n "${DSEQ:-}" ] && just-akash close "$DSEQ" 2>/dev/null \|\| true`. Already named in this rule's own ADVISORY entry as the only instance repo-wide. |
+| `check_teardown_cannot_be_silenced` | `df-akash-gate.yml:82` — `[ -n "${DSEQ:-}" ] && just-akash close "$DSEQ" 2>/dev/null \|\| true`, and `:56`, the silenced install feeding it. **FIXED** (df-cicd #178, #359); the rule is ENFORCING since 2026-09-29 (all consumers scanned clean). |
 | `check_schedule_inputs_are_empty` | `ci-unrunnable-tracker.yml`, `secret-sweep-full-history.yml` |
 
 So the standard is not inapplicable to `df-cicd` as a whole — only its registration half is.
