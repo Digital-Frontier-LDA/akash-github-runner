@@ -320,6 +320,10 @@ runs:
           # Every consumer scanned clean on origin/main (Blazing-Back 75, blazing 38,
           # df-cicd 34, just-akash 15); the one true finding was FIXED (df-cicd #178,
           # #359). Scope: akash_runner/test_every_rule_has_a_call_site.py (ENFORCING entry).
+          # Widened by DF-infra dfinfra-gh1553's review (continue-on-error, curl DELETE,
+          # `||` NL, `|| echo`, if/set +e, opaque installs; missing dir -> rc=2). Re-measured
+          # on every consumer's main before merge: df-cicd, just-akash, blazing PASS;
+          # Blazing-Back's 3 true positives fixed in its own PR before its pin moves.
           python3 "$ROOT/check_teardown_cannot_be_silenced.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
           # ⛔ ${VAR:-default} substitutes ONLY when VAR is unset or EMPTY — a
           # non-numeric set value like `abc` passes straight through and reaches
