@@ -42,7 +42,7 @@ from workflow_corpus import RunBlock, run_blocks  # noqa: E402
 _CLOSES_BILLABLE = re.compile(
     r"""(?ix)
     \b(?:
-        just-akash \s+ (?:close|destroy|close-all)      # akash deployment escrow
+        just-akash \s+ (?:close-all|close|destroy-all|destroy)  # akash deployment escrow
       | akash \s+ tx \s+ deployment \s+ close
       | provider-services \s+ tx \s+ deployment \s+ close
       | DELETE \s+ /v1/deployments                       # console api close
@@ -55,6 +55,50 @@ _CLOSES_BILLABLE = re.compile(
 
 # The failure cannot reach the step's exit status.
 _SWALLOWS_FAILURE = re.compile(r"(\|\|\s*true\b|\|\|\s*:\s*(?:$|\n)|\|\|\s*exit\s+0\b)", re.M)
+
+
+# Criterion 2 of #1553: the close depends on a tool whose INSTALLATION is silenced, so
+# "tool absent" and "nothing to clean" read the same. Measured on df-akash-gate.yml:56 —
+# `pipx install just-akash 2>/dev/null || pip install just-akash 2>/dev/null || true`
+# never installed anything (just-akash is not on PyPI), for as long as the gate existed.
+# Only tools some billable close in the SAME workflow invokes are considered: a silenced
+# install of anything else is a best-effort convenience, not a teardown hazard.
+_CLOSE_TOOL = re.compile(
+    r"\b(just-akash|akash|provider-services|gcloud|kubectl)\b(?=\s+(?:close|destroy|tx|compute|delete))"
+)
+_INSTALLS = re.compile(r"\b(?:pipx|pip3?|uv\s+(?:tool|pip))\s+install\b")
+
+
+def _close_tools(blocks: list[RunBlock]) -> set[str]:
+    """Tools the workflow invokes on a billable-close line (comments excluded)."""
+    tools: set[str] = set()
+    for block in blocks:
+        for line in block.code.splitlines():
+            if _CLOSES_BILLABLE.search(line):
+                tools.update(m.group(1) for m in _CLOSE_TOOL.finditer(line))
+    return tools
+
+
+def _silenced_installs(block: RunBlock, tools: set[str]) -> list[tuple[int, str]]:
+    """Lines that install a close tool AND swallow their own failure."""
+    out: list[tuple[int, str]] = []
+    if not tools:
+        return out
+    tool_re = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(t) for t in sorted(tools)) + r")(?![\w-])")
+    stripped = block.code.splitlines()
+    verbatim = block.script.splitlines()
+    for i, line in enumerate(stripped):
+        if _INSTALLS.search(line) and tool_re.search(line) and _SWALLOWS_FAILURE.search(line):
+            excerpt = verbatim[i].strip() if i < len(verbatim) else line.strip()
+            tool = tool_re.search(line).group(0)
+            out.append((
+                block.start_line + i,
+                (
+                    f"the install of `{tool}`, which a billable close in this workflow needs, "
+                    f"swallows its own failure — 'tool absent' then reads as 'nothing to clean': {excerpt}"
+                ),
+            ))
+    return out
 
 
 def _offending_lines(block: RunBlock) -> list[tuple[int, str]]:
@@ -75,11 +119,14 @@ def _offending_lines(block: RunBlock) -> list[tuple[int, str]]:
 
 
 def check_workflow(path: Path) -> list[tuple[int, str]]:
-    """Every silenced-close line in one workflow or composite action."""
+    """Every silenced-close line, and every silenced install of a close tool, in one file."""
     findings: list[tuple[int, str]] = []
-    for block in run_blocks(path):
+    blocks = list(run_blocks(path))
+    tools = _close_tools(blocks)
+    for block in blocks:
         findings.extend(_offending_lines(block))
-    return findings
+        findings.extend(_silenced_installs(block, tools))
+    return sorted(findings)
 
 
 def main(argv: list[str] | None = None) -> int:

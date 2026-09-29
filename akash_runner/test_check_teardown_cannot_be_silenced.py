@@ -150,3 +150,97 @@ def test_the_population_is_not_empty() -> None:
             "the rule no longer flags the verbatim historical defect (_REAL) — it has "
             "stopped working, and every clean result over the corpus is meaningless"
         )
+
+
+# ── Criterion 2: the close depends on a tool whose installation is silenced ───
+# KP: df-akash-gate.yml:56 BYTE-FOR-BYTE, next to the (already fixed, failure-propagating)
+# reap it fed. The reap alone is clean; the finding is that its tool never installs.
+_SILENCED_INSTALL_REAL = """
+name: gate
+jobs:
+  gate:
+    steps:
+      - name: Allowlist + manifest
+        run: |
+          pipx install just-akash 2>/dev/null || pip install just-akash 2>/dev/null || true
+      - name: Reap the lease (always)
+        run: |
+          if [ -n "${DSEQ:-}" ]; then
+            just-akash destroy --dseq "$DSEQ" --yes
+          fi
+"""
+
+# KN: the fix — pinned wheel, verified, failure propagates.
+_PINNED_INSTALL = """
+name: gate
+jobs:
+  gate:
+    steps:
+      - run: |
+          echo "$JA_SHA256  $whl" | sha256sum -c -
+          pipx install "$whl"
+          just-akash destroy --help > /dev/null
+      - run: |
+          just-akash destroy --dseq "$DSEQ" --yes
+"""
+
+# KN: silenced install of the close tool, but nothing in the workflow closes anything.
+_SILENCED_INSTALL_NO_CLOSE = """
+name: tools
+jobs:
+  t:
+    steps:
+      - run: |
+          pipx install just-akash 2>/dev/null || true
+          just-akash list || true
+"""
+
+# KN: silenced install of an UNRELATED tool alongside a real close.
+_SILENCED_UNRELATED_INSTALL = """
+name: gate
+jobs:
+  gate:
+    steps:
+      - run: |
+          pip install rich 2>/dev/null || true
+      - run: |
+          just-akash destroy --dseq "$DSEQ" --yes
+"""
+
+# KP: `destroy-all` is the real bulk close (there is no `close-all` in just-akash).
+_SILENCED_DESTROY_ALL = """
+name: sweep
+jobs:
+  s:
+    steps:
+      - run: |
+          just-akash destroy-all --yes || true
+"""
+
+
+def test_KP_the_real_silenced_install_of_the_close_tool_is_flagged(tmp_path: Path) -> None:
+    """KP, load-bearing. Verbatim df-akash-gate.yml:56; the reap beside it is clean."""
+    found = check_workflow(_wf(tmp_path, _SILENCED_INSTALL_REAL))
+    assert len(found) == 1, found
+    assert "pipx install just-akash" in found[0][1]
+
+
+def test_KN_a_pinned_failure_propagating_install_is_not_flagged(tmp_path: Path) -> None:
+    """KN, the fix itself must pass — otherwise the rule forbids the remedy."""
+    assert check_workflow(_wf(tmp_path, _PINNED_INSTALL)) == []
+
+
+def test_KN_silenced_install_without_any_billable_close_is_not_flagged(tmp_path: Path) -> None:
+    """KN. The conjunction matters: no close, no teardown hazard."""
+    assert check_workflow(_wf(tmp_path, _SILENCED_INSTALL_NO_CLOSE)) == []
+
+
+def test_KN_silenced_install_of_an_unrelated_tool_is_not_flagged(tmp_path: Path) -> None:
+    """KN. Only tools a billable close actually invokes count."""
+    assert check_workflow(_wf(tmp_path, _SILENCED_UNRELATED_INSTALL)) == []
+
+
+def test_KP_a_silenced_destroy_all_is_flagged(tmp_path: Path) -> None:
+    """KP. The real bulk subcommand; the old pattern only knew a non-existent close-all."""
+    assert check_workflow(_wf(tmp_path, _SILENCED_DESTROY_ALL)), "destroy-all || true not flagged"
+
