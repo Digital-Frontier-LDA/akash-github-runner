@@ -244,3 +244,39 @@ def test_KP_a_silenced_destroy_all_is_flagged(tmp_path: Path) -> None:
     """KP. The real bulk subcommand; the old pattern only knew a non-existent close-all."""
     assert check_workflow(_wf(tmp_path, _SILENCED_DESTROY_ALL)), "destroy-all || true not flagged"
 
+
+# ── Continuations: one invocation, many physical lines (CodeRabbit on #79) ────
+_CONTINUED_SILENCED_INSTALL = """
+name: gate
+jobs:
+  gate:
+    steps:
+      - run: |
+          pipx install just-akash 2>/dev/null || \\
+            true
+      - run: |
+          just-akash destroy --dseq "$DSEQ" --yes
+"""
+
+_CONTINUED_SILENCED_CLOSE = """
+name: gate
+jobs:
+  gate:
+    steps:
+      - run: |
+          just-akash destroy --dseq "$DSEQ" \\
+            --yes || true
+"""
+
+
+def test_KP_an_install_silenced_on_a_continuation_line_is_flagged(tmp_path: Path) -> None:
+    """KP. The install and its `|| true` sit on different physical lines."""
+    found = check_workflow(_wf(tmp_path, _CONTINUED_SILENCED_INSTALL))
+    assert len(found) == 1, found
+    assert "pipx install just-akash" in found[0][1] and "true" in found[0][1]
+
+
+def test_KP_a_close_silenced_on_a_continuation_line_is_flagged(tmp_path: Path) -> None:
+    """KP. Same shape for the original criterion: the close continues onto its `|| true`."""
+    assert check_workflow(_wf(tmp_path, _CONTINUED_SILENCED_CLOSE)), "continued silenced close not flagged"
+

@@ -69,11 +69,42 @@ _CLOSE_TOOL = re.compile(
 _INSTALLS = re.compile(r"\b(?:pipx|pip3?|uv\s+(?:tool|pip))\s+install\b")
 
 
+def _logical_lines(block: RunBlock) -> list[tuple[int, str, str]]:
+    """(first physical line index, code, verbatim) per LOGICAL shell line.
+
+    A trailing backslash continues a command, so `pipx install just-akash || \\` with
+    `true` on the next line is ONE invocation whose failure is swallowed. Matching
+    physical lines alone would split the install from its `|| true` and miss it — the
+    "select the whole invocation, not a line" constraint #1553 records. Reported at the
+    command's first line.
+    """
+    code = block.code.splitlines()
+    verbatim = block.script.splitlines()
+    out: list[tuple[int, str, str]] = []
+    i = 0
+    while i < len(code):
+        start, parts, vparts = i, [], []
+        while True:
+            line = code[i]
+            vline = verbatim[i] if i < len(verbatim) else line
+            if line.rstrip().endswith("\\") and i + 1 < len(code):
+                parts.append(line.rstrip()[:-1])
+                vparts.append(vline.rstrip()[:-1].rstrip())
+                i += 1
+                continue
+            parts.append(line)
+            vparts.append(vline.strip())
+            i += 1
+            break
+        out.append((start, " ".join(parts), " ".join(p.strip() for p in vparts if p.strip())))
+    return out
+
+
 def _close_tools(blocks: list[RunBlock]) -> set[str]:
     """Tools the workflow invokes on a billable-close line (comments excluded)."""
     tools: set[str] = set()
     for block in blocks:
-        for line in block.code.splitlines():
+        for _, line, _ in _logical_lines(block):
             if _CLOSES_BILLABLE.search(line):
                 tools.update(m.group(1) for m in _CLOSE_TOOL.finditer(line))
     return tools
@@ -85,11 +116,8 @@ def _silenced_installs(block: RunBlock, tools: set[str]) -> list[tuple[int, str]
     if not tools:
         return out
     tool_re = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(t) for t in sorted(tools)) + r")(?![\w-])")
-    stripped = block.code.splitlines()
-    verbatim = block.script.splitlines()
-    for i, line in enumerate(stripped):
+    for i, line, excerpt in _logical_lines(block):
         if _INSTALLS.search(line) and tool_re.search(line) and _SWALLOWS_FAILURE.search(line):
-            excerpt = verbatim[i].strip() if i < len(verbatim) else line.strip()
             tool = tool_re.search(line).group(0)
             out.append((
                 block.start_line + i,
@@ -109,11 +137,8 @@ def _offending_lines(block: RunBlock) -> list[tuple[int, str]]:
     human-readable excerpt.
     """
     out: list[tuple[int, str]] = []
-    stripped = block.code.splitlines()
-    verbatim = block.script.splitlines()
-    for i, line in enumerate(stripped):
+    for i, line, excerpt in _logical_lines(block):
         if _CLOSES_BILLABLE.search(line) and _SWALLOWS_FAILURE.search(line):
-            excerpt = verbatim[i].strip() if i < len(verbatim) else line.strip()
             out.append((block.start_line + i, excerpt))
     return out
 
