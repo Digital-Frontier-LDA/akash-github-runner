@@ -379,18 +379,53 @@ def test_removing_shell_ranking_match_makes_the_shell_bypass_survive(tmp_path):
     assert not any("price ranking" in finding for finding in findings)
 
 
+RELEASED_CAPABLE_REF = "5943cb825efaaad91f8120238dd23820cf209b10"
+
+
+def _production_selection_findings(document):
+    return [
+        finding
+        for finding in standard.check(document, target_kind="lease-spender")
+        if "request-aware per-node" in finding
+        or "not bound to an exact 40-hex" in finding
+    ]
+
+
+def _direct_deploy(ref: str):
+    return _lease_spender(
+        f"uvx --from git+https://github.com/Digital-Frontier-LDA/just-akash@{ref} "
+        "just-akash deploy --select emptiest --provider akash1a --provider akash1b"
+    )
+
+
+def test_released_per_node_capable_ref_passes_with_the_production_stamp():
+    assert _production_selection_findings(_direct_deploy(RELEASED_CAPABLE_REF)) == []
+
+
+def test_unstamped_40_hex_is_the_negative_control_for_the_released_stamp():
+    findings = _production_selection_findings(_direct_deploy("0" * 40))
+    assert any("per_node_fit" in finding for finding in findings)
+
+
 def test_production_stamp_has_no_dead_or_falsely_capable_entry():
     assert standard.PLACEMENT_IMPLEMENTATIONS, "stamp inventory disappeared"
     assert set(standard.PLACEMENT_IMPLEMENTATIONS) == {
-        "ebf2e37ac786ad1b7a0643625cbe0626131707fa"
+        "ebf2e37ac786ad1b7a0643625cbe0626131707fa",
+        RELEASED_CAPABLE_REF,
     }, "an implementation stamp was added without a corresponding exercised audit case"
     assert all(
         capabilities <= standard.PLACEMENT_REQUIRED_CAPABILITIES
         for capabilities in standard.PLACEMENT_IMPLEMENTATIONS.values()
     )
-    assert not any(
-        standard.PLACEMENT_REQUIRED_CAPABILITIES <= capabilities
-        for capabilities in standard.PLACEMENT_IMPLEMENTATIONS.values()
-    ), (
-        "an implementation was marked eligible before core#48 and just-akash#346 released"
+    capable = {
+        ref
+        for ref, capabilities in standard.PLACEMENT_IMPLEMENTATIONS.items()
+        if standard.PLACEMENT_REQUIRED_CAPABILITIES <= capabilities
+    }
+    assert capable == {RELEASED_CAPABLE_REF}, (
+        "an implementation was marked eligible without an exercised audit case"
     )
+    exercised = {
+        ref for ref in capable if not _production_selection_findings(_direct_deploy(ref))
+    }
+    assert exercised == capable, "a capable stamp is not exercised by a positive"

@@ -29,8 +29,14 @@ IMMUTABLE = re.compile(r"(?:v\d+\.\d+\.\d+|[0-9a-f]{40})$")
 # wiring pins an akash-lease-core release with aggregate AND per-node fit.
 PLACEMENT_IMPLEMENTATIONS: dict[str, frozenset[str]] = {
     # just-akash#346 candidate. It derives exact group request profiles, but still pins
-    # akash-lease-core v0.14.0, whose fit policy is aggregate-only (core#48 remains open).
+    # akash-lease-core v0.14.0, whose fit policy is aggregate-only (pre core#48).
     "ebf2e37ac786ad1b7a0643625cbe0626131707fa": frozenset({"request_profiles"}),
+    # just-akash main. Descends from #353 (ae5d550f, request profiles fed to both auction
+    # paths) and #357 (2c80f90e); pins akash-lease-core v0.15.2, which carries core#49
+    # "Require per-node fit alongside aggregate capacity" (core#48 closed 2026-09-13).
+    "5943cb825efaaad91f8120238dd23820cf209b10": frozenset(
+        {"request_profiles", "per_node_fit"}
+    ),
 }
 PLACEMENT_REQUIRED_CAPABILITIES = frozenset({"request_profiles", "per_node_fit"})
 
