@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 from pathlib import Path
 
+import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -109,3 +111,124 @@ def test_the_yaml_boolean_on_key_is_handled():
     document = yaml.safe_load(MAIN)
     assert True in document, "fixture no longer exercises the boolean-key trap"
     assert _c(MAIN), "the trap is unhandled: a real known-bad produced no finding"
+
+
+def _manual_proof_document():
+    document = yaml.safe_load(
+        EARLY_CLOSE_182.replace(
+            "if: always()", "if: always() && needs.pool.result != 'success'"
+        )
+    )
+    document[True]["workflow_dispatch"] = {
+        "inputs": {"private-proof": {"type": "boolean", "default": False}}
+    }
+    document["jobs"]["consumer"] = {"needs": "pool", "runs-on": "ubuntu-latest"}
+    document["jobs"]["close-private-proof"] = {
+        "needs": ["pool", "consumer"],
+        "if": "always() && github.event_name == 'workflow_dispatch' && "
+        "inputs.private-proof == true && needs.pool.outputs.dseq != ''",
+        "uses": "./.github/workflows/akash-close.yml",
+        "with": {"dseq": "${{ needs.pool.outputs.dseq }}"},
+    }
+    return document
+
+
+def test_dispatch_only_consumer_closer_preserves_the_reusable_handoff():
+    assert check(_manual_proof_document()) == []
+
+
+def test_manual_closer_cannot_replace_the_required_reusable_rollback():
+    document = _manual_proof_document()
+    del document["jobs"]["teardown"]
+    assert any("contains no teardown job" in finding for finding in check(document))
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "always() && needs.pool.outputs.dseq != ''",
+        "always() && github.event_name == 'workflow_dispatch' && needs.pool.outputs.dseq != ''",
+        "always() && inputs.private-proof == true && needs.pool.outputs.dseq != ''",
+        "always() && github.event_name == 'workflow_dispatch' && inputs.private-proof == false && needs.pool.outputs.dseq != ''",
+        "always() && github.event_name == 'workflow_dispatch' && inputs.private-proof == true && needs.pool.outputs.dseq != '' || true",
+        "!(always() && github.event_name == 'workflow_dispatch' && inputs.private-proof == true && needs.pool.outputs.dseq != '')",
+        "always() && github.event_name == 'workflow_dispatch' && inputs.private-proof == true && needs.pool.outputs.dseq != '' && true",
+    ],
+    ids=[
+        "identity-only",
+        "event-only",
+        "input-only",
+        "false-gate",
+        "or",
+        "not",
+        "extra",
+    ],
+)
+def test_manual_scope_expression_mutations_remain_in_rollback_scope(replacement):
+    document = _manual_proof_document()
+    document["jobs"]["close-private-proof"]["if"] = replacement
+    assert any("close-private-proof" in finding for finding in check(document))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "call-input",
+        "call-input-upper",
+        "dispatch-case-alias",
+        "call-case-alias",
+        "call-nonascii",
+        "default-on",
+        "string-default",
+        "required",
+        "type",
+        "no-input",
+    ],
+)
+def test_manual_scope_input_schema_mutations_remain_in_rollback_scope(mutation):
+    document = _manual_proof_document()
+    spec = document[True]["workflow_dispatch"]["inputs"]["private-proof"]
+    if mutation == "call-input":
+        document[True]["workflow_call"]["inputs"] = {
+            "private-proof": {"type": "boolean", "default": False}
+        }
+    elif mutation == "call-input-upper":
+        document[True]["workflow_call"]["inputs"] = {
+            "PRIVATE-PROOF": {"type": "boolean", "default": True}
+        }
+    elif mutation == "dispatch-case-alias":
+        document[True]["workflow_dispatch"]["inputs"]["PRIVATE-PROOF"] = {
+            "type": "boolean",
+            "default": True,
+        }
+    elif mutation == "call-case-alias":
+        document[True]["workflow_call"]["inputs"] = {
+            "other": {"type": "string"},
+            "OTHER": {"type": "string"},
+        }
+    elif mutation == "call-nonascii":
+        document[True]["workflow_call"]["inputs"] = {
+            "prıvate-proof": {"type": "boolean"}
+        }
+    elif mutation == "default-on":
+        spec["default"] = True
+    elif mutation == "string-default":
+        spec["default"] = "false"
+    elif mutation == "required":
+        spec["required"] = True
+    elif mutation == "type":
+        spec["type"] = "string"
+    else:
+        document[True]["workflow_dispatch"]["inputs"] = {}
+    assert any("close-private-proof" in finding for finding in check(document))
+
+
+def test_manual_scope_cannot_donate_identity_or_producer_dependency():
+    original = _manual_proof_document()
+    for field, value in (
+        ("needs", ["consumer"]),
+        ("with", {"dseq": "${{ needs.other.outputs.dseq }}"}),
+    ):
+        document = deepcopy(original)
+        document["jobs"]["close-private-proof"][field] = value
+        assert any("close-private-proof" in finding for finding in check(document))
