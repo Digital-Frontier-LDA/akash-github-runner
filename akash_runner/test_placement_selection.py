@@ -10,6 +10,7 @@ from akash_runner.test_check_standard import valid_workflow
 
 
 CAPABLE_REF = "f" * 40
+RELEASED_REF = "cb242b51214c5752110be5bb6b4dd791efc2a469"
 OLD_REF = "16e47373f5fead96de2cd0f9609e4b50fb8e845"
 CAPABLE = {
     CAPABLE_REF: frozenset({"request_profiles", "per_node_fit"}),
@@ -157,6 +158,46 @@ def test_direct_candidate_without_per_node_fit_is_rejected():
         "just-akash deploy --select emptiest --provider akash1a --provider akash1b"
     )
     assert any("per_node_fit" in f for f in _selection_findings(document))
+
+
+def test_released_private_proof_sdk_passes_exact_direct_placement():
+    assert (
+        standard._placement_selection_findings(
+            _direct_deploy(RELEASED_REF), {}, standard.PLACEMENT_IMPLEMENTATIONS
+        )
+        == []
+    )
+
+
+def test_released_private_proof_sdk_supports_the_reusable_pool_contract():
+    document = _runner_pool()
+    for job_name in ("pool", "teardown"):
+        document["jobs"][job_name]["uses"] = document["jobs"][job_name]["uses"].replace(
+            CAPABLE_REF, RELEASED_REF
+        )
+    document["jobs"]["pool"]["with"]["just-akash-ref"] = RELEASED_REF
+    assert standard.check(document) == []
+
+
+def test_released_sdk_stamp_cannot_bless_another_revision():
+    unknown_ref = "cb242b51214c5752110be5bb6b4dd791efc2a460"
+    assert unknown_ref not in standard.PLACEMENT_IMPLEMENTATIONS
+    findings = standard._placement_selection_findings(
+        _direct_deploy(unknown_ref), {}, standard.PLACEMENT_IMPLEMENTATIONS
+    )
+    assert any(
+        "not stamped for request-aware per-node placement" in f for f in findings
+    )
+
+
+def test_released_sdk_requires_both_independently_verified_capabilities():
+    for missing in ("request_profiles", "per_node_fit"):
+        inventory = dict(standard.PLACEMENT_IMPLEMENTATIONS)
+        inventory[RELEASED_REF] = inventory[RELEASED_REF] - {missing}
+        findings = standard._placement_selection_findings(
+            _direct_deploy(RELEASED_REF), {}, inventory
+        )
+        assert any(missing in finding for finding in findings)
 
 
 def test_multi_provider_deploy_without_select_mutation_is_rejected():
@@ -412,6 +453,7 @@ def test_production_stamp_has_no_dead_or_falsely_capable_entry():
     assert set(standard.PLACEMENT_IMPLEMENTATIONS) == {
         "ebf2e37ac786ad1b7a0643625cbe0626131707fa",
         RELEASED_CAPABLE_REF,
+        RELEASED_REF,
     }, "an implementation stamp was added without a corresponding exercised audit case"
     assert all(
         capabilities <= standard.PLACEMENT_REQUIRED_CAPABILITIES
@@ -422,10 +464,12 @@ def test_production_stamp_has_no_dead_or_falsely_capable_entry():
         for ref, capabilities in standard.PLACEMENT_IMPLEMENTATIONS.items()
         if standard.PLACEMENT_REQUIRED_CAPABILITIES <= capabilities
     }
-    assert capable == {RELEASED_CAPABLE_REF}, (
+    assert capable == {RELEASED_CAPABLE_REF, RELEASED_REF}, (
         "an implementation was marked eligible without an exercised audit case"
     )
     exercised = {
-        ref for ref in capable if not _production_selection_findings(_direct_deploy(ref))
+        ref
+        for ref in capable
+        if not _production_selection_findings(_direct_deploy(ref))
     }
     assert exercised == capable, "a capable stamp is not exercised by a positive"

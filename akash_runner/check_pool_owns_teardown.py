@@ -111,6 +111,71 @@ def _producer_exports_identity(job: dict[str, Any], identity: str) -> bool:
     return len(sources) == 1 and bool(sources[0].get("run") or sources[0].get("uses"))
 
 
+def _dispatch_only_teardown(
+    document: dict[str, Any], job: dict[str, Any], producer: str, identity: str
+) -> bool:
+    """Prove a manual proof closer cannot retire a reusable caller's handoff.
+
+    The github context belongs to the caller even inside a reusable workflow, so
+    event_name alone is insufficient. The strict true-gated input must be declared
+    only for manual dispatch, with a false default, and absent from workflow_call.
+    Recognize one complete condition, never a substring or an arbitrary expression.
+    This excludes only the manual branch from reusable rollback; it never replaces
+    the canonical rollback required for the published identity.
+    """
+    events = _on(document)
+    call = events.get("workflow_call")
+    dispatch = events.get("workflow_dispatch")
+    if not isinstance(call, dict) or not isinstance(dispatch, dict):
+        return False
+    call_inputs = call.get("inputs", {})
+    dispatch_inputs = dispatch.get("inputs")
+    if not isinstance(call_inputs, dict) or not isinstance(dispatch_inputs, dict):
+        return False
+    # GitHub's inputs expression context compares keys case-insensitively. Limit
+    # this proof to unambiguous ASCII identifiers and reject aliases rather than
+    # mistaking PRIVATE-PROOF for the absence of private-proof.
+    normalized_names: list[set[str]] = []
+    for input_mapping in (call_inputs, dispatch_inputs):
+        names: set[str] = set()
+        for name in input_mapping:
+            if not isinstance(name, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_-]*", name
+            ):
+                return False
+            normalized = name.lower()
+            if normalized in names:
+                return False
+            names.add(normalized)
+        normalized_names.append(names)
+    expression = _text(job.get("if")).strip()
+    if expression.startswith("${{") and expression.endswith("}}"):
+        expression = expression[3:-2].strip()
+    match = re.fullmatch(
+        rf"always\s*\(\s*\)\s*&&\s*github\.event_name\s*==\s*"
+        rf"(?:'workflow_dispatch'|\"workflow_dispatch\")\s*&&\s*"
+        rf"inputs\.([A-Za-z_][A-Za-z0-9_-]*)\s*==\s*true\s*&&\s*"
+        rf"needs\.{re.escape(producer)}\.outputs\.{re.escape(identity)}\s*"
+        rf"!=\s*(?:''|\"\")",
+        expression,
+    )
+    if (
+        not match
+        or producer not in _needs(job)
+        or not _receives_identity(job, producer, identity)
+    ):
+        return False
+    flag = match.group(1)
+    spec = dispatch_inputs.get(flag)
+    return (
+        flag.lower() not in normalized_names[0]
+        and isinstance(spec, dict)
+        and spec.get("type") == "boolean"
+        and spec.get("default") is False
+        and spec.get("required", False) is False
+    )
+
+
 def _supported_closer(job: dict[str, Any]) -> bool:
     """A teardown-shaped name cannot substitute for the canonical close operation."""
     target = _text(job.get("uses"))
@@ -157,8 +222,11 @@ def check(document: dict[str, Any]) -> list[str]:
         teardowns = [
             name
             for name, job in jobs.items()
-            if TEARDOWN_JOB.search(name)
-            or "runner-teardown.yml" in _text(job.get("uses"))
+            if (
+                TEARDOWN_JOB.search(name)
+                or "runner-teardown.yml" in _text(job.get("uses"))
+            )
+            and not _dispatch_only_teardown(document, job, producer, identity)
         ]
         if not teardowns:
             findings.append(

@@ -37,6 +37,13 @@ PLACEMENT_IMPLEMENTATIONS: dict[str, frozenset[str]] = {
     "5943cb825efaaad91f8120238dd23820cf209b10": frozenset(
         {"request_profiles", "per_node_fit"}
     ),
+    # just-akash main after #421. Descends from the stamped 5943cb revision and
+    # still passes SDL-derived resource profiles and group count to both auction
+    # paths. Pins akash-lease-core v0.16.1 (589c67f), whose aggregate AND per-node
+    # fit policy is unchanged; its exact-source per-node suite passes 31 cases.
+    "cb242b51214c5752110be5bb6b4dd791efc2a469": frozenset(
+        {"request_profiles", "per_node_fit"}
+    ),
 }
 PLACEMENT_REQUIRED_CAPABILITIES = frozenset({"request_profiles", "per_node_fit"})
 
