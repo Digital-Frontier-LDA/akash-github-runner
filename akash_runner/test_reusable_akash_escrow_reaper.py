@@ -66,6 +66,7 @@ def _run(
     prefix: str = "just-akash-",
     reap_owned: str | None = None,
     stale_line: str = "stale (closable): 20",
+    api_key: str = "stub",
 ):
     """Execute the real step script with a fake `uv` that records its argv."""
     bindir = tmp_path / "bin"
@@ -87,7 +88,7 @@ def _run(
         # test exercising the `set -u` path that aborted the whole step.
         **({"REAP_OWNED": reap_owned} if reap_owned is not None else {}),
         "PLACEMENT_PREFIX": prefix,
-        "AKASH_API_KEY": "stub",
+        "AKASH_API_KEY": api_key,
         "GH_TOKEN": "offline-token",
         "CALLER_REPOSITORY": "example/consumer",
         "GITHUB_OUTPUT": str(tmp_path / "out.txt"),
@@ -237,6 +238,16 @@ def test_the_placement_prefix_is_passed_through(tmp_path, execute):
     assert "--placement-prefix dfci-infra-" in argv, (
         f"EXECUTE={execute!r}: the prefix never reached the sweep — argv was {argv!r}"
     )
+
+
+@pytest.mark.parametrize("key", ["", "   "])
+def test_no_akash_key_fails_before_the_sweep(tmp_path, key):
+    """AKASH_API_KEY is optional once credentials-sops exists. With neither source the step
+    must refuse by name, not hand the sweep a blank key and trust it to notice."""
+    proc, argv, _ = _run(tmp_path, execute="true", api_key=key)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "no Akash credential" in (proc.stdout + proc.stderr)
+    assert argv == "", "the sweep ran without a credential"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

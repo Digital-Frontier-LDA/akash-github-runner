@@ -101,10 +101,30 @@ on:
         required: false
         default: 1500
         type: number
+      credentials-sops:
+        description: >-
+          Read the credential from the caller's secrets/akash-runner.sops.env, decrypted
+          with CREDENTIALS_AGE_KEY, instead of a workflow_call secret. For orgs whose
+          baseline allows only SOPS-sourced credentials. A secret passed directly wins.
+        required: false
+        default: false
+        type: boolean
+      sops-loader-ref:
+        description: >-
+          40-hex just-akash commit whose .github/actions/sops-env decrypts the caller file.
+          Required with credentials-sops; pin it, a branch would let the loader drift.
+        required: false
+        default: ''
+        type: string
     secrets:
+      CREDENTIALS_AGE_KEY:
+        description: Age key for the caller's secrets/akash-runner.sops.env (credentials-sops only).
+        required: false
       runner-pat:
-        description: PAT with org admin:org scope. Falls back to nothing — see the guard below.
-        required: true
+        description: >-
+          PAT with org admin:org scope. Required unless credentials-sops supplies
+          GH_RUNNER_PAT; falls back to nothing — see the guard below.
+        required: false
 
 permissions:
   contents: read
@@ -115,15 +135,69 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Reap offline, non-busy registrations under the owned prefixes
+      - name: Require a pinned SOPS loader
+        if: inputs.credentials-sops
         env:
-          GH_TOKEN: ${{ secrets.runner-pat }}
+          REF: ${{ inputs.sops-loader-ref }}
+        run: |
+          case "$REF" in
+            *[!0-9a-f]*|"") echo "::error::sops-loader-ref must be a 40-character lowercase commit SHA"; exit 1 ;;
+          esac
+          [ "${#REF}" -eq 40 ] || { echo "::error::sops-loader-ref must be exactly 40 hex characters"; exit 1; }
+
+      # credentials-sops (Digital-Frontier-LDA): the org baseline (df-cicd secrets-only-sops)
+      # forbids a caller passing this credential as a GitHub secret. Read it from the caller's
+      # secrets/akash-runner.sops.env instead: ciphertext only, from the caller's exact
+      # revision, decrypted by just-akash's own sops-env action at a pinned SHA, every value
+      # masked before it reaches GITHUB_ENV. A secret passed directly still wins.
+      - name: Check out the caller encrypted runner credentials
+        if: inputs.credentials-sops
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: .akash-runner-credentials
+          sparse-checkout: secrets/akash-runner.sops.env
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Check out the pinned just-akash SOPS loader
+        if: inputs.credentials-sops
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: Digital-Frontier-LDA/just-akash
+          ref: ${{ inputs.sops-loader-ref }}
+          path: .just-akash
+          sparse-checkout: .github/actions/sops-env
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Load the caller runner credentials from SOPS
+        if: inputs.credentials-sops
+        uses: ./.just-akash/.github/actions/sops-env
+        with:
+          age-key: ${{ secrets.CREDENTIALS_AGE_KEY }}
+          file: .akash-runner-credentials/secrets/akash-runner.sops.env
+
+      - name: Reap offline, non-busy registrations under the owned prefixes
+        id: reap
+        env:
+          GH_TOKEN: ${{ secrets.runner-pat || env.GH_RUNNER_PAT }}
           ORG: ${{ inputs.org }}
           PREFIXES: ${{ inputs.name-prefixes }}
           DRY_RUN: ${{ inputs.dry-run }}
           API_FLOOR: ${{ inputs.api-floor }}
         run: |
           set -euo pipefail
+
+          # ---- fail closed on a missing credential ------------------------------------
+          # runner-pat is optional once credentials-sops exists. With neither source, gh
+          # fails, the rate-limit read below becomes 0, and the floor check exits 0 having
+          # reaped nothing, so a missing credential would read as a busy CI window.
+          if [ -z "${GH_TOKEN// /}" ]; then
+            echo "::error title=Stale runner reaper::no credential. Pass runner-pat, or set"\
+                 "credentials-sops with GH_RUNNER_PAT in secrets/akash-runner.sops.env."
+            exit 1
+          fi
 
           # ---- fail closed on a blank prefix list -------------------------------------
           # `.strip()`-equivalent: a whitespace-only input must NOT become a prefix that

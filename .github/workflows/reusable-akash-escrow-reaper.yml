@@ -113,10 +113,23 @@ on:
         required: false
         default: "3.13"
         type: string
+      credentials-sops:
+        description: >-
+          Read the credential from the caller's secrets/akash-runner.sops.env, decrypted
+          with CREDENTIALS_AGE_KEY, instead of a workflow_call secret. For orgs whose
+          baseline allows only SOPS-sourced credentials. A secret passed directly wins.
+        required: false
+        default: false
+        type: boolean
     secrets:
+      CREDENTIALS_AGE_KEY:
+        description: Age key for the caller's secrets/akash-runner.sops.env (credentials-sops only).
+        required: false
       AKASH_API_KEY:
-        description: Console API key for the account whose deployments are to be swept.
-        required: true
+        description: >-
+          Console API key for the account whose deployments are to be swept. Required
+          unless credentials-sops supplies it; an empty key fails the sweep.
+        required: false
     outputs:
       closed:
         description: Number of deployments closed (0 on a report-only run).
@@ -185,10 +198,43 @@ jobs:
           fi
           uv tool install "git+https://github.com/Digital-Frontier-LDA/just-akash@${REF}"
 
+      # credentials-sops (Digital-Frontier-LDA): the org baseline (df-cicd secrets-only-sops)
+      # forbids a caller passing this credential as a GitHub secret. Read it from the caller's
+      # secrets/akash-runner.sops.env instead: ciphertext only, from the caller's exact
+      # revision, decrypted by just-akash's own sops-env action at a pinned SHA, every value
+      # masked before it reaches GITHUB_ENV. A secret passed directly still wins.
+      - name: Check out the caller encrypted runner credentials
+        if: inputs.credentials-sops
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: .akash-runner-credentials
+          sparse-checkout: secrets/akash-runner.sops.env
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Check out the pinned just-akash SOPS loader
+        if: inputs.credentials-sops
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: Digital-Frontier-LDA/just-akash
+          ref: ${{ inputs.just-akash-ref }}
+          path: .just-akash
+          sparse-checkout: .github/actions/sops-env
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Load the caller runner credentials from SOPS
+        if: inputs.credentials-sops
+        uses: ./.just-akash/.github/actions/sops-env
+        with:
+          age-key: ${{ secrets.CREDENTIALS_AGE_KEY }}
+          file: .akash-runner-credentials/secrets/akash-runner.sops.env
+
       - name: Sweep
         id: sweep
         env:
-          AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+          AKASH_API_KEY: ${{ secrets.AKASH_API_KEY || env.AKASH_API_KEY }}
           GH_TOKEN: ${{ github.token }}
           CALLER_REPOSITORY: ${{ github.repository }}
           # ⛔ THROUGH env AND COMPARED FOR EQUALITY BELOW. Two measured traps meet here and
@@ -204,6 +250,12 @@ jobs:
           REAP_OWNED: ${{ inputs.reap-owned }}
         run: |
           set -euo pipefail
+          # ⛔ REFUSED IF BLANK. AKASH_API_KEY is optional once credentials-sops exists; with
+          # neither source the sweep would be handed a blank key. Refuse here, by name.
+          if [ -z "${AKASH_API_KEY// /}" ]; then
+            echo "::error::no Akash credential. Pass AKASH_API_KEY, or set credentials-sops with AKASH_API_KEY in secrets/akash-runner.sops.env."
+            exit 1
+          fi
           # ⛔ REFUSED IF BLANK. `"".startswith(x)` is True for every string, so an empty
           # prefix turns the ownership conjunct into a tautology and the sweep would claim
           # every deployment on the account, including other repos'. The mechanism refuses it

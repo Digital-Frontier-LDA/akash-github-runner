@@ -22,11 +22,12 @@ def _script() -> str:
     doc = yaml.safe_load(WF.read_text())
     # YAML 1.1 parses a bare `on:` as boolean True — the same trap check_dereg_backstop notes.
     job = doc["jobs"]["reap"]
-    return next(s["run"] for s in job["steps"] if "run" in s)
+    # By id: the credentials-sops guard is a run step too, and precedes the reaper.
+    return next(s["run"] for s in job["steps"] if s.get("id") == "reap")
 
 
 def _run(tmp_path: Path, *, runners: str, prefixes: str = "akash-ci-", dry: str = "false",
-         core: str = "5000", floor: str = "1500") -> subprocess.CompletedProcess:
+         core: str = "5000", floor: str = "1500", token: str = "stub-token") -> subprocess.CompletedProcess:
     """Execute the real step script with a fake `gh` that serves `runners` and logs DELETEs."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -46,7 +47,7 @@ def _run(tmp_path: Path, *, runners: str, prefixes: str = "akash-ci-", dry: str 
         """))
     (bindir / "gh").chmod(0o755)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "ORG": "test-org",
-           "PREFIXES": prefixes, "DRY_RUN": dry, "API_FLOOR": floor}
+           "PREFIXES": prefixes, "DRY_RUN": dry, "API_FLOOR": floor, "GH_TOKEN": token}
     return subprocess.run(["bash", "-c", _script()], capture_output=True, text=True, env=env)
 
 
@@ -99,6 +100,17 @@ def test_dry_run_defaults_to_true_in_the_contract(tmp_path):
     """A destructive default is how a sweeper deletes before anyone reads its output."""
     doc = yaml.safe_load(WF.read_text())
     assert doc[True]["workflow_call"]["inputs"]["dry-run"]["default"] is True
+
+
+@pytest.mark.parametrize("token", ["", "   "])
+def test_no_credential_fails_instead_of_reading_as_an_exhausted_budget(tmp_path, token):
+    """runner-pat is optional once credentials-sops exists. With neither source, gh fails,
+    the rate-limit read becomes 0, and the floor check would exit 0 having reaped nothing:
+    a missing credential must not pass as a busy CI window."""
+    r = _run(tmp_path, runners='{"runners":[{"id":5,"name":"akash-ci-dead","status":"offline","busy":false}]}', token=token)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "no credential" in (r.stdout + r.stderr)
+    assert _deleted(tmp_path) == []
 
 
 def test_an_exhausted_budget_skips_without_failing_the_job(tmp_path):
