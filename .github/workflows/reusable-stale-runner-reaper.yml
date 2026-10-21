@@ -189,6 +189,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ---- fail closed on a missing credential ------------------------------------
+          # runner-pat is optional once credentials-sops exists. With neither source, gh
+          # fails, the rate-limit read below becomes 0, and the floor check exits 0 having
+          # reaped nothing, so a missing credential would read as a busy CI window.
+          if [ -z "${GH_TOKEN// /}" ]; then
+            echo "::error title=Stale runner reaper::no credential. Pass runner-pat, or set"\
+                 "credentials-sops with GH_RUNNER_PAT in secrets/akash-runner.sops.env."
+            exit 1
+          fi
+
           # ---- fail closed on a blank prefix list -------------------------------------
           # `.strip()`-equivalent: a whitespace-only input must NOT become a prefix that
           # matches everything. This is the one input whose failure mode is destructive.

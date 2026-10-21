@@ -250,6 +250,12 @@ jobs:
           REAP_OWNED: ${{ inputs.reap-owned }}
         run: |
           set -euo pipefail
+          # ⛔ REFUSED IF BLANK. AKASH_API_KEY is optional once credentials-sops exists; with
+          # neither source the sweep would be handed a blank key. Refuse here, by name.
+          if [ -z "${AKASH_API_KEY// /}" ]; then
+            echo "::error::no Akash credential. Pass AKASH_API_KEY, or set credentials-sops with AKASH_API_KEY in secrets/akash-runner.sops.env."
+            exit 1
+          fi
           # ⛔ REFUSED IF BLANK. `"".startswith(x)` is True for every string, so an empty
           # prefix turns the ownership conjunct into a tautology and the sweep would claim
           # every deployment on the account, including other repos'. The mechanism refuses it
