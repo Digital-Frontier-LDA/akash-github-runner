@@ -22,7 +22,8 @@ def _script() -> str:
     doc = yaml.safe_load(WF.read_text())
     # YAML 1.1 parses a bare `on:` as boolean True — the same trap check_dereg_backstop notes.
     job = doc["jobs"]["reap"]
-    return next(s["run"] for s in job["steps"] if "run" in s)
+    # By id: the credentials-sops guard is a run step too, and precedes the reaper.
+    return next(s["run"] for s in job["steps"] if s.get("id") == "reap")
 
 
 def _run(tmp_path: Path, *, runners: str, prefixes: str = "akash-ci-", dry: str = "false",

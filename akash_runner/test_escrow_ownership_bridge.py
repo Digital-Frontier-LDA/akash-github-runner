@@ -31,7 +31,8 @@ def run_step(
         "${{ inputs.execute }}": execute,
         "${{ inputs.placement-prefix }}": prefix,
         "${{ inputs.reap-owned }}": "false",
-        "${{ secrets.AKASH_API_KEY }}": "offline-key",
+        # credentials-sops: a directly passed secret still wins, so it evaluates to it.
+        "${{ secrets.AKASH_API_KEY || env.AKASH_API_KEY }}": "offline-key",
         "${{ github.token }}": "offline-github-token",
         "${{ github.repository }}": repository,
     }
