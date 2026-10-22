@@ -155,3 +155,50 @@ def test_the_code_scan_is_announced_when_it_cannot_run(tmp_path, capsys):
     (wf / "w.yml").write_text("jobs: {}\n")
     assert mod.main(["--workflows-dir", str(wf)]) == 0
     assert "code scan SKIPPED" in capsys.readouterr().out
+
+
+# ---- d3's review of a8def223: each surface must be able to fail ------------------------------
+
+
+def test_a_yaml_suffixed_workflow_is_scanned(tmp_path):
+    wf = tmp_path / "wf"
+    wf.mkdir()
+    (wf / "runner.yaml").write_text(f"image: {GHCR}{NAMED_PRE_FIX[0]}\n")
+    assert mod.main(["--workflows-dir", str(wf)]) != 0
+
+
+def test_json_outside_the_allowlist_is_scanned(tmp_path):
+    assert _repo(tmp_path, {"deploy/sdl.json": f'{{"image": "{GHCR}{NAMED_PRE_FIX[0]}"}}\n'}) != 0
+
+
+def test_matching_is_case_insensitive(tmp_path):
+    upper = "sha256:" + NAMED_PRE_FIX[0].split(":", 1)[1].upper()
+    assert _repo(tmp_path, {"tools/tool.py": f'IMAGE = "{GHCR}{upper}"\n'}) != 0
+
+
+def test_a_shipped_test_named_shell_script_is_scanned(tmp_path):
+    """The test_*/_test name rule is Python-only: a production test_*.sh is code."""
+    assert _repo(tmp_path, {".github/scripts/test_runner_pool.sh": f"IMAGE={GHCR}{NAMED_PRE_FIX[0]}\n"}) != 0
+
+
+def test_fixtures_outside_a_test_dir_are_scanned(tmp_path):
+    """A role's shipped files/fixtures/ is code; only fixtures/ under tests/ is test data."""
+    assert _repo(tmp_path, {"roles/runner/files/fixtures/sdl.yaml": f"image: {GHCR}{NAMED_PRE_FIX[0]}\n"}) != 0
+
+
+def test_a_trailing_comment_is_history_not_a_pin(tmp_path):
+    line = f"image: {GHCR}{FIXED}  # was {GHCR}{NAMED_PRE_FIX[0]}\n"
+    wf = tmp_path / "wf"
+    wf.mkdir()
+    (wf / "w.yml").write_text(line)
+    assert mod.main(["--workflows-dir", str(wf)]) == 0
+    # ...but the same digest as the VALUE is still a pin.
+    (wf / "w.yml").write_text(f"image: {GHCR}{NAMED_PRE_FIX[0]}  # was {GHCR}{FIXED}\n")
+    assert mod.main(["--workflows-dir", str(wf)]) != 0
+
+
+def test_a_negative_control_repointed_at_a_fixed_image_is_flagged(tmp_path, capsys):
+    verifier = ".github/scripts/verify_owned_worker_image.py"
+    rc = _repo(tmp_path, {verifier: f'IMAGE = "{GHCR}{FIXED}"\nOLD_IMAGE = "{GHCR}{FIXED}"\n'})
+    assert rc != 0
+    assert "negative control is not pre-fix" in capsys.readouterr().out

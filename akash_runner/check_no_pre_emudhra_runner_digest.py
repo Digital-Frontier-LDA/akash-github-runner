@@ -10,20 +10,43 @@ The rule is "no pre-fix digest is admissible", not "must equal the fix", so any 
 passes. The list is MEASURED: every df-akash-runner manifest GHCR published before the fixed
 index, minus that index's own children (data/df_akash_runner_pre_emudhra_digests.txt).
 
-ENFORCING, unlike check_runner_image_digest_floor (advisory because a version floor rots on
-GitHub's deprecation dates): a pre-fix image stays pre-fix forever, so this answer cannot rot.
-The digest is matched anywhere in a workflow's code, whatever the image name around it,
-because a private mirror (docker.io/.../akash-runner) copies the bytes unchanged under a name
-the runner-name extraction does not recognise. Comment lines are excluded, so history may
-still name them.
+MODE: ADVISORY NOW, ENFORCING AT PROMOTION. It is wired `advisory` in the conformance action
+with a PROMOTE WHEN in test_every_rule_has_a_call_site.ADVISORY (every consumer at 0 hits).
+Unlike check_runner_image_digest_floor, which stays advisory because a version floor rots on
+GitHub's deprecation dates, a pre-fix image stays pre-fix forever, so this answer cannot rot
+and the rule is meant to enforce once consumers are repinned.
 
-SCOPE: the workflows AND the repository's non-test code. Hard-coded runner images live in
-scripts too (the owned controller's workload table, Flynn's worker verifier, DePIN's
-prerequisites tool), and a regression there would otherwise pass. Excluded by structure: test
-code (tests/, test_*.py, *_test.py, conftest.py, fixtures/), which names pre-fix digests on
-purpose as negative fixtures, and prose (only code suffixes are read). The few non-test files
-that MUST hold a pre-fix digest are in ALLOWLIST, each narrowed to one line pattern and a
-reason.
+WHAT THIS GUARDS, AND WHAT GUARDS THE REST. This deny-list is the HISTORY guard: it knows every
+digest published before the fix. It cannot know a digest that does not exist yet, so the
+FUTURE guard is at build time: df-akash-runner's build-and-verify runs the distrust test
+(tests/test_ca_distrust_container.sh, since #19), and publish.yml refuses to publish a commit
+whose verify did not pass. The Sentinel scanner image has the same gate (#25). Residual, by
+design not covered here: "published after the fixed index" is a time proxy, not proof of the
+CA floor. A publish.yml dispatch on an OLD branch would gate on that branch's own older verify
+(which predates the distrust test) and could publish a pre-fix build under a NEW digest.
+Closing that needs a positive check (an OCI label set by the fixed build, or a per-digest
+published-image distrust run), not a longer deny-list.
+
+NAMES AND PLACES. The digest is matched whatever the image name around it, because a private
+mirror (docker.io/.../akash-runner) copies the bytes unchanged under a name the runner-name
+extraction does not recognise. Matching is case-insensitive.
+
+SCOPE: the workflows (*.yml, *.yaml) AND the repository's non-test code. Hard-coded runner
+images live in scripts too (the owned controller's workload table, Flynn's worker verifier,
+DePIN's prerequisites tool). Excluded by structure: test code, meaning any tests/ or test/
+directory at any depth, fixtures/ only inside such a directory, and the Python names
+test_*.py, *_test.py and conftest.py. A shipped script named test_*.sh IS scanned. Prose is
+not read (only code suffixes).
+
+COMMENTS ARE HISTORY. A full-line comment is skipped, and so is a trailing comment: anything
+after whitespace + "#" on yml/yaml/py/sh/toml/cfg/ini lines. So `image: ...@<fixed>  # was
+<pre-fix>` passes. Known limit: a " #" inside a quoted string also ends the scanned part of
+that line.
+
+ALLOWLIST. A file that MUST hold a pre-fix digest gets an entry: path, a line pattern, and a
+reason. Generated RECORDS (SBOMs, attestations, receipts such as blazing's owned-history
+proof) name pre-fix digests as history, not pins. They go in ALLOWLIST by path with `.*` and
+their regeneration owner, rather than by dropping a suffix from the scan.
 """
 
 from __future__ import annotations
@@ -44,71 +67,126 @@ PRE_EMUDHRA_DIGESTS: frozenset[str] = frozenset(
 )
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _CODE_SUFFIXES = {".py", ".sh", ".bash", ".yml", ".yaml", ".json", ".toml", ".cfg", ".ini"}
-_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", "tests", "test", "fixtures"}
-# (repo-relative path, line regex, reason). A line matching the regex may name ONE pre-fix
-# digest; nothing else in that file may. Keep each entry as narrow as the case it exempts.
+_HASH_COMMENT_SUFFIXES = _CODE_SUFFIXES - {".json"}
+_NEVER_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__"}
+_TEST_DIRS = {"tests", "test"}
+_TRAILING_COMMENT = re.compile(r"\s#.*$")
+
+# Flynn's negative control: the verifier executes OLD_IMAGE and requires it to FAIL, so its
+# value must BE a pre-fix image. Any pre-fix digest is accepted (Flynn's repin may move it),
+# but a control repointed at a fixed image stops being a control, and is flagged.
+_FLYNN_CONTROL = re.compile(
+    r'^OLD_IMAGE = "ghcr\.io/digital-frontier-lda/df-akash-runner@(sha256:[0-9a-f]{64})"$'
+)
+# (repo-relative path, line regex, reason, owner). A line matching the regex may name a
+# pre-fix digest; nothing else in that file may. Keep each entry as narrow as the case.
 ALLOWLIST: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         ".github/scripts/verify_owned_worker_image.py",
-        re.compile(r'^OLD_IMAGE = "ghcr\.io/digital-frontier-lda/df-akash-runner@sha256:[0-9a-f]{64}"$'),
-        "Flynn's NEGATIVE CONTROL: the verifier executes OLD_IMAGE and requires it to FAIL, so it "
-        "must be a pre-fix image by design. Exempt only the OLD_IMAGE assignment.",
+        _FLYNN_CONTROL,
+        "Flynn's NEGATIVE CONTROL: only the OLD_IMAGE assignment, and only while its value IS a "
+        "pre-fix digest (see negative_control_findings).",
     ),
     (
         "proofs/owned-history-approved-source.json",
         re.compile(r".*"),
         "blazing's ATTESTED owned-history baseline (byte-pinned by "
-        "owned_history_migration_contract.BASELINE_SHA): a record of what was approved, which "
-        "cannot be edited without forging it. It is history, not a pin.",
+        "owned_history_migration_contract.BASELINE_SHA): a generated record of what was "
+        "approved, regenerated only by blazing's owned-history migration. History, not a pin.",
     ),
 )
 
 
 def _is_test_path(rel: Path) -> bool:
+    dirs = rel.parts[:-1]
+    in_test_dir = bool(_TEST_DIRS & set(dirs))
     name = rel.name
+    python_test = rel.suffix == ".py" and (
+        name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py"
+    )
+    # fixtures/ only counts inside a test directory: a shipped role's files/fixtures/ is code.
+    return in_test_dir or python_test
+
+
+def _never(rel: Path) -> bool:
+    return bool(_NEVER_DIRS & set(rel.parts[:-1]))
+
+
+def _code_part(line: str, suffix: str) -> str:
+    stripped = line.lstrip()
+    if suffix in _HASH_COMMENT_SUFFIXES:
+        if stripped.startswith("#"):
+            return ""
+        return _TRAILING_COMMENT.sub("", line)
+    return line
+
+
+def _pre_fix(text: str) -> list[str]:
+    return sorted(set(_DIGEST.findall(text.lower())) & PRE_EMUDHRA_DIGESTS)
+
+
+def _message(digest: str) -> str:
     return (
-        bool(_SKIP_DIRS & set(rel.parts[:-1]))
-        or name.startswith("test_")
-        or name.endswith("_test.py")
-        or name == "conftest.py"
+        f"pre-fix runner digest {digest} (built before the eMudhra/emSign CA distrust, "
+        f"df-cicd-rpi.1) is referenced; pin {FIXED_INDEX} or a later df-akash-runner build"
     )
 
 
+def findings(text: str, suffix: str = ".yml") -> list[str]:
+    """Findings for one file's text: pre-fix digests in its code (comments are history)."""
+    code = "\n".join(_code_part(line, suffix) for line in text.splitlines())
+    return [_message(d) for d in _pre_fix(code)]
+
+
+def negative_control_findings(rel: str, text: str) -> list[str]:
+    """Flynn's OLD_IMAGE must stay a pre-fix image, or the negative control proves nothing."""
+    if rel != ".github/scripts/verify_owned_worker_image.py":
+        return []
+    out = []
+    for line in text.splitlines():
+        match = _FLYNN_CONTROL.match(line.strip())
+        if match and match.group(1).lower() not in PRE_EMUDHRA_DIGESTS:
+            out.append(
+                f"negative control is not pre-fix: OLD_IMAGE names {match.group(1)}, which "
+                "is not a pre-eMudhra image, so executing it no longer proves the gate refuses"
+            )
+    return out
+
+
 def _allowed(rel: str, line: str) -> bool:
-    return any(rel == path and pattern.match(line.strip()) for path, pattern, _ in ALLOWLIST)
+    for path, pattern, _ in ALLOWLIST:
+        if rel != path:
+            continue
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        if pattern is _FLYNN_CONTROL:
+            return match.group(1).lower() in PRE_EMUDHRA_DIGESTS
+        return True
+    return False
 
 
 def code_findings(root: Path) -> list[tuple[str, str]]:
-    """(repo-relative file, finding) for pre-fix digests in non-test code outside workflows."""
+    """(repo-relative file, finding) for non-test code outside the workflows directory."""
     out: list[tuple[str, str]] = []
     workflows = (root / ".github" / "workflows").resolve()
     for path in sorted(root.rglob("*")):
         if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
             continue
         rel = path.relative_to(root)
-        if _is_test_path(rel) or workflows in path.resolve().parents:
+        if _never(rel) or _is_test_path(rel) or workflows in path.resolve().parents:
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        comment = "#" if path.suffix != ".json" else None
+        posix = rel.as_posix()
+        out += [(posix, f) for f in negative_control_findings(posix, text)]
         for line in text.splitlines():
-            if comment and line.lstrip().startswith(comment):
-                continue
-            hits = set(_DIGEST.findall(line.lower())) & PRE_EMUDHRA_DIGESTS
-            if hits and not _allowed(rel.as_posix(), line):
-                out += [(rel.as_posix(), finding) for finding in findings(line) if any(h in finding for h in hits)]
+            code = _code_part(line, path.suffix)
+            if _pre_fix(code) and not _allowed(posix, line):
+                out += [(posix, f) for f in findings(code, path.suffix)]
     return out
-
-
-def findings(text: str) -> list[str]:
-    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-    return [
-        f"pre-fix runner digest {digest} (built before the eMudhra/emSign CA distrust, "
-        f"df-cicd-rpi.1) is referenced; pin {FIXED_INDEX} or a later df-akash-runner build"
-        for digest in sorted(set(_DIGEST.findall(code.lower())) & PRE_EMUDHRA_DIGESTS)
-    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     bad = 0
     for path in sorted(root.glob("*.yml")) + sorted(root.glob("*.yaml")):
-        for finding in findings(path.read_text(encoding="utf-8")):
+        for finding in findings(path.read_text(encoding="utf-8"), path.suffix):
             bad += 1
             print(f"::error file={path},title=Pre-eMudhra runner image::{finding}")
     repo = Path(args.repo_root) if args.repo_root else (
