@@ -95,3 +95,63 @@ def test_it_is_wired_into_the_conformance_action():
     test_every_rule_has_a_call_site.ADVISORY. Promotion flips this assertion."""
     action = (HERE.parent / ".github/actions/akash-runner-conformance/action.yml").read_text()
     assert 'advisory check_no_pre_emudhra_runner_digest.py --workflows-dir "$WORKFLOWS_DIR"' in action
+
+
+# ---- the non-test code scan (scripts hold hard-coded images too) ----------------------------
+
+GHCR = "ghcr.io/digital-frontier-lda/df-akash-runner@"
+
+
+def _repo(tmp_path: Path, files: dict[str, str]) -> int:
+    root = tmp_path / "repo"
+    (root / ".github" / "workflows").mkdir(parents=True)
+    (root / ".github" / "workflows" / "ci.yml").write_text("jobs: {}\n")
+    for rel, text in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return mod.main(["--workflows-dir", str(root / ".github" / "workflows")])
+
+
+@pytest.mark.parametrize("digest", NAMED_PRE_FIX[:6])
+@pytest.mark.parametrize(
+    "where",
+    [
+        ".github/actions/owned-akash-controller/runtime/scripts/owned_akash_canary.py",  # df-cicd
+        "scripts/owned_akash_canary.py",  # guardian
+        "tools/owned_cpu_prerequisites.py",  # DePIN
+    ],
+)
+def test_a_pre_fix_digest_in_a_script_is_red(tmp_path, where, digest):
+    assert _repo(tmp_path, {where: f'IMAGE = "{GHCR}{digest}"\n'}) != 0
+
+
+def test_flynns_negative_control_is_allowed_but_only_that_constant(tmp_path):
+    verifier = ".github/scripts/verify_owned_worker_image.py"
+    control = f'OLD_IMAGE = "{GHCR}{NAMED_PRE_FIX[1]}"\n'
+    assert _repo(tmp_path, {verifier: f'IMAGE = "{GHCR}{FIXED}"\n' + control}) == 0
+    # The allowlist must not cover the live IMAGE in the same file.
+    assert _repo(tmp_path / "b", {verifier: f'IMAGE = "{GHCR}{NAMED_PRE_FIX[0]}"\n' + control}) != 0
+
+
+def test_test_code_prose_comments_and_the_attested_proof_are_not_pins(tmp_path):
+    old = NAMED_PRE_FIX[0]
+    assert _repo(
+        tmp_path,
+        {
+            "tests/test_pins.py": f'BANNED = ("{old}",)\n',
+            "pkg/test_image.py": f'X = "{old}"\n',
+            "tests/fixtures/sdl.yaml": f"image: {GHCR}{old}\n",
+            "docs/history.md": f"was {GHCR}{old}\n",
+            "tools/tool.py": f"# previously {GHCR}{old}\nIMAGE = \"{GHCR}{FIXED}\"\n",
+            "proofs/owned-history-approved-source.json": f'{{"akash-runner": {{"qualified": "{old}"}}}}\n',
+        },
+    ) == 0
+
+
+def test_the_code_scan_is_announced_when_it_cannot_run(tmp_path, capsys):
+    wf = tmp_path / "loose"
+    wf.mkdir()
+    (wf / "w.yml").write_text("jobs: {}\n")
+    assert mod.main(["--workflows-dir", str(wf)]) == 0
+    assert "code scan SKIPPED" in capsys.readouterr().out
