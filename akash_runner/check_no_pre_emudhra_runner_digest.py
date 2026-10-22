@@ -24,8 +24,9 @@ whose verify did not pass. The Sentinel scanner image has the same gate (#25). R
 design not covered here: "published after the fixed index" is a time proxy, not proof of the
 CA floor. A publish.yml dispatch on an OLD branch would gate on that branch's own older verify
 (which predates the distrust test) and could publish a pre-fix build under a NEW digest.
-Closing that needs a positive check (an OCI label set by the fixed build, or a per-digest
-published-image distrust run), not a longer deny-list.
+Tracked as df-cicd-rpi.4: df-akash-runner#26 makes publish.yml refuse any ref but main (the
+cheap fix); a positive check (an OCI label set by the fixed build, or a per-digest
+published-image distrust run) is the stronger follow-up, not a longer deny-list.
 
 NAMES AND PLACES. The digest is matched whatever the image name around it, because a private
 mirror (docker.io/.../akash-runner) copies the bytes unchanged under a name the runner-name
@@ -157,12 +158,11 @@ def _allowed(rel: str, line: str) -> bool:
     for path, pattern, _ in ALLOWLIST:
         if rel != path:
             continue
-        match = pattern.match(line.strip())
-        if not match:
-            continue
-        if pattern is _FLYNN_CONTROL:
-            return match.group(1).lower() in PRE_EMUDHRA_DIGESTS
-        return True
+        # Only consulted for a line that already names a pre-fix digest, so a match is enough.
+        # A negative control repointed at a FIXED image is caught by negative_control_findings,
+        # not here (it has no pre-fix hit to exempt).
+        if pattern.match(line.strip()):
+            return True
     return False
 
 
