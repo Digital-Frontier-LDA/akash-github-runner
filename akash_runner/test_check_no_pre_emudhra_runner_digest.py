@@ -149,6 +149,51 @@ def test_test_code_prose_comments_and_the_attested_proof_are_not_pins(tmp_path):
     ) == 0
 
 
+# ---- blazing's migration snapshots: allowed line by line, and nothing else -------------------
+# Verbatim from Borduas-Holdings/blazing d18a178d (and the #1656 head e068ed0e), copied by hand
+# rather than built from ALLOWLIST, so a loosened pattern cannot agree with itself.
+CE1_ROOT = 'ROOT = "sha256:ce1b123c98e273479e08e6315fc81f7017957c23dbf88878076e75572b7b18cc"  # public image digest\n'
+SEVEN_TAG = (
+    'AAF = "sha256:aaf3799b5e138abef0831bb8467ded7325164316f0cfde5c183fe6e129eae79e"\n'
+    "CANDIDATES = {\n"
+    '    "candidate-3259dfc6c6221db9ade4d6e1dca423a32a785008": "sha256:a88afbda5e9a6fc333898766c7831a25931433eb92af6ee95ddb0fa2ab2edb6b",\n'
+    '    "candidate-40706a10807d39e7d31065a360b3b3ce95668464": "sha256:3c99f89b9b88440d40e418a2d5d74a8e8cad902e8d545504aaed23c8e9fd7a43",\n'
+    '    "candidate-6f5c30c4220c54ec4a9f0f2cfef472f8bb39ce9c": "sha256:588f5fa1e514343832393c1ca31b990d8586c5f7ab69035adc2ecb376502f10a",\n'
+    '    "candidate-cce642e0c1dbe1be8cbd869de2e4a1539338f291": "sha256:5b43d797d92bb081d2e085046b48579ebf0448a48fcc32f562eafa0c811b4a32",\n'
+    "}\n"
+)
+
+
+def test_blazings_migration_snapshots_are_history(tmp_path):
+    assert _repo(
+        tmp_path,
+        {"scripts/ce1_runner_private_mirror.py": CE1_ROOT, "scripts/ghcr_runner_tag_migration.py": SEVEN_TAG},
+    ) == 0
+
+
+def test_a_new_pin_in_a_snapshot_file_is_still_red(tmp_path):
+    extra = f'IMAGE = "{GHCR}{NAMED_PRE_FIX[0]}"\n'
+    assert _repo(tmp_path, {"scripts/ce1_runner_private_mirror.py": CE1_ROOT + extra}) != 0
+    assert _repo(tmp_path / "b", {"scripts/ghcr_runner_tag_migration.py": SEVEN_TAG + extra}) != 0
+
+
+def test_a_snapshot_constant_moved_to_another_pre_fix_digest_is_red(tmp_path):
+    moved = CE1_ROOT.replace("ce1b123c98e273479e08e6315fc81f7017957c23dbf88878076e75572b7b18cc", NAMED_PRE_FIX[0].split(":", 1)[1])
+    assert moved != CE1_ROOT
+    assert _repo(tmp_path, {"scripts/ce1_runner_private_mirror.py": moved}) != 0
+
+
+def test_a_snapshot_line_in_another_file_is_red(tmp_path):
+    assert _repo(tmp_path, {"scripts/other.py": CE1_ROOT}) != 0
+
+
+def test_blazings_live_private_mirror_pin_is_red(tmp_path):
+    """private_runner_mirror.DIGEST is the RUNTIME runner of owned-private-podman-images.yml:
+    found by the 2026-10-22 promotion scan and deliberately NOT allowlisted."""
+    live = 'DIGEST = "sha256:aaf3799b5e138abef0831bb8467ded7325164316f0cfde5c183fe6e129eae79e"\n'
+    assert _repo(tmp_path, {"scripts/private_runner_mirror.py": live}) != 0
+
+
 def test_the_code_scan_is_announced_when_it_cannot_run(tmp_path, capsys):
     wf = tmp_path / "loose"
     wf.mkdir()

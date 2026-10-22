@@ -79,8 +79,21 @@ _TRAILING_COMMENT = re.compile(r"\s#.*$")
 _FLYNN_CONTROL = re.compile(
     r'^OLD_IMAGE = "ghcr\.io/digital-frontier-lda/df-akash-runner@(sha256:[0-9a-f]{64})"$'
 )
-# (repo-relative path, line regex, reason, owner). A line matching the regex may name a
-# pre-fix digest; nothing else in that file may. Keep each entry as narrow as the case.
+
+
+def _exact_lines(*lines: str) -> re.Pattern[str]:
+    """Allow exactly these stripped lines, and nothing else in the file."""
+    return re.compile("^(?:" + "|".join(re.escape(line) for line in lines) + ")$")
+
+
+_MIGRATION_SNAPSHOT = (
+    "one-shot migration snapshot; push trigger scoped to codex/...-2026100x branches: the "
+    "constant is the pre-fix image being preserved, not a runner being run (decided by the "
+    "team, akash-github-runner#85, 2026-10-22)."
+)
+
+# (repo-relative path, line regex, reason). A line matching the regex may name a pre-fix
+# digest; nothing else in that file may. Keep each entry as narrow as the case.
 ALLOWLIST: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         ".github/scripts/verify_owned_worker_image.py",
@@ -94,6 +107,31 @@ ALLOWLIST: tuple[tuple[str, re.Pattern[str], str], ...] = (
         "blazing's ATTESTED owned-history baseline (byte-pinned by "
         "owned_history_migration_contract.BASELINE_SHA): a generated record of what was "
         "approved, regenerated only by blazing's owned-history migration. History, not a pin.",
+    ),
+    (
+        # blazing: the fixed ce1 graph mirrored privately by ce1-runner-private-mirror.yml.
+        "scripts/ce1_runner_private_mirror.py",
+        _exact_lines(
+            'ROOT = "sha256:ce1b123c98e273479e08e6315fc81f7017957c23dbf88878076e75572b7b18cc"'
+            "  # public image digest"
+        ),
+        _MIGRATION_SNAPSHOT,
+    ),
+    (
+        # blazing: the fixed seven-tag GHCR snapshot preserved by ghcr-runner-seven-tag-*.yml.
+        "scripts/ghcr_runner_tag_migration.py",
+        _exact_lines(
+            'AAF = "sha256:aaf3799b5e138abef0831bb8467ded7325164316f0cfde5c183fe6e129eae79e"',
+            '"candidate-3259dfc6c6221db9ade4d6e1dca423a32a785008": '
+            '"sha256:a88afbda5e9a6fc333898766c7831a25931433eb92af6ee95ddb0fa2ab2edb6b",',
+            '"candidate-40706a10807d39e7d31065a360b3b3ce95668464": '
+            '"sha256:3c99f89b9b88440d40e418a2d5d74a8e8cad902e8d545504aaed23c8e9fd7a43",',
+            '"candidate-6f5c30c4220c54ec4a9f0f2cfef472f8bb39ce9c": '
+            '"sha256:588f5fa1e514343832393c1ca31b990d8586c5f7ab69035adc2ecb376502f10a",',
+            '"candidate-cce642e0c1dbe1be8cbd869de2e4a1539338f291": '
+            '"sha256:5b43d797d92bb081d2e085046b48579ebf0448a48fcc32f562eafa0c811b4a32",',
+        ),
+        _MIGRATION_SNAPSHOT,
     ),
 )
 
