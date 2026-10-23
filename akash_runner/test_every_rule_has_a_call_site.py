@@ -88,6 +88,15 @@ ENFORCING = {
     # was promoted on the same shape (blazing 21 PASS + Blazing-Back 56 PASS +
     # known-positive exit 1).
     "check_context_properties_exist.py",
+    # ⭐ PROMOTED 2026-10-23 (df-cicd-rpi.1). Its PROMOTE WHEN was "every consumer workflows-dir
+    # is scanned at origin/main and reports 0 pre-fix references". Measured met with the checker
+    # at 062f5a50, fresh depth-1 clones, judged by exit code (akash-github-runner#85):
+    #     df-cicd main b7c9dfca + release/owned-runner-without-407 c82217f1, df-grafana 7e5c2bf4,
+    #     DePIN c04b2abd, guardian abb9f2b6, Flynn deploy-env 202d17e5, this repo 95881614,
+    #     Blazing-Back efa7fc40, blazing 5ad80fa9, just-akash d1158432 -> all rc=0, 0 refs.
+    # Exemptions are the reviewed ALLOWLIST only (Flynn's negative control, blazing's attested
+    # proof and two migration snapshots). Known-positive: a synthetic pre-fix pin exits 1.
+    "check_no_pre_emudhra_runner_digest.py",
 }
 
 # ⚠ INVOKED, REPORTED, AND NOT YET FAILING THE BUILD. Each entry states WHY it is not
@@ -95,15 +104,6 @@ ENFORCING = {
 # is just a quieter version of the defect this module exists to catch. An advisory rule
 # nobody ever promotes has a call site and still enforces nothing.
 ADVISORY: dict[str, str] = {
-    "check_no_pre_emudhra_runner_digest.py": (
-        "ADVISORY because IN-SCOPE REPOS STILL PIN PRE-FIX DIGESTS (df-cicd-rpi.1, measured "
-        "2026-10-22): consumer repins are open or landing (df-cicd #549/#550, blazing #1656, "
-        "Blazing-Back #2706, just-akash #480, DePIN #479 merged, Flynn #1688, guardian #1348). "
-        "Unlike check_runner_image_digest_floor this answer cannot rot: a pre-fix image stays "
-        "pre-fix, so the rule is meant to ENFORCE. PROMOTE WHEN: every consumer workflows-dir "
-        "(Blazing-Back, blazing, df-cicd, just-akash, df-grafana, Flynn, guardian, DePIN, "
-        "this repo) is scanned at origin/main and reports 0 pre-fix references."
-    ),
     "check_stale_runner_reaper_is_adopted.py": (
         "ADVISORY because the remedy it demands is NOT YET WRITTEN. Measured 2026-08-31 on "
         "origin/main: just-akash ADOPTS at a pinned sha; Blazing-Back, blazing and df-cicd "

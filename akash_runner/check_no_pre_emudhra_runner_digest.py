@@ -10,11 +10,10 @@ The rule is "no pre-fix digest is admissible", not "must equal the fix", so any 
 passes. The list is MEASURED: every df-akash-runner manifest GHCR published before the fixed
 index, minus that index's own children (data/df_akash_runner_pre_emudhra_digests.txt).
 
-MODE: ADVISORY NOW, ENFORCING AT PROMOTION. It is wired `advisory` in the conformance action
-with a PROMOTE WHEN in test_every_rule_has_a_call_site.ADVISORY (every consumer at 0 hits).
-Unlike check_runner_image_digest_floor, which stays advisory because a version floor rots on
-GitHub's deprecation dates, a pre-fix image stays pre-fix forever, so this answer cannot rot
-and the rule is meant to enforce once consumers are repinned.
+MODE: ENFORCING since 2026-10-23, promoted after every consumer scanned 0 at origin/main (the
+measurement is recorded at test_every_rule_has_a_call_site.ENFORCING). Unlike
+check_runner_image_digest_floor, which stays advisory because a version floor rots on GitHub's
+deprecation dates, a pre-fix image stays pre-fix forever, so this answer cannot rot.
 
 WHAT THIS GUARDS, AND WHAT GUARDS THE REST. This deny-list is the HISTORY guard: it knows every
 digest published before the fix. It cannot know a digest that does not exist yet, so the

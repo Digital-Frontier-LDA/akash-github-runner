@@ -204,6 +204,7 @@ runs:
           check_backstop_covers_producers.py
           check_context_properties_exist.py
           check_teardown_cannot_be_silenced.py
+          check_no_pre_emudhra_runner_digest.py
         )
         DIR_SCOPED_ADVISORY=(
           check_provisioning_is_delegated.py
@@ -216,7 +217,6 @@ runs:
           check_test_pins_a_literal.py
           check_pool_not_before_consumers.py
           check_runner_image_digest_floor.py
-          check_no_pre_emudhra_runner_digest.py
           check_conformance_pin_agrees_with_checker_ref.py
           check_listing_failure_is_loud.py
           check_stale_runner_reaper_is_adopted.py
@@ -368,9 +368,10 @@ runs:
           # digest opacity can hide.
           python3 "$ROOT/check_disable_auto_update_absent.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
           advisory check_runner_image_digest_floor.py --workflows-dir "$WORKFLOWS_DIR"
-          # df-cicd-rpi.1: ADVISORY until every consumer has repinned off pre-fix digests, then
-          # promoted (see test_every_rule_has_a_call_site.ADVISORY "PROMOTE WHEN").
-          advisory check_no_pre_emudhra_runner_digest.py --workflows-dir "$WORKFLOWS_DIR"
+          # ⛔ BLOCKING since 2026-10-23 (df-cicd-rpi.1). A pre-fix runner image stays pre-fix
+          # forever, so unlike check_runner_image_digest_floor this answer cannot rot. Promoted
+          # after every consumer scanned 0 at origin/main (test_every_rule_has_a_call_site).
+          python3 "$ROOT/check_no_pre_emudhra_runner_digest.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1
           # ⛔ A LISTING THAT SWALLOWS ITS OWN FAILURE REPORTS A CLEAN SWEEP. `|| true` /
           # `2>/dev/null` on the org runner listing turns a 403 into an empty population,
           # and an empty population is indistinguishable from "nothing to reap" — the reaper

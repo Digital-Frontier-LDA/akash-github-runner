@@ -90,11 +90,12 @@ def test_a_commented_reference_is_history_not_a_pin(tmp_path):
     assert mod.main(["--workflows-dir", str(wf)]) == 0
 
 
-def test_it_is_wired_into_the_conformance_action():
-    """Advisory until every consumer is repinned; the PROMOTE WHEN lives in
-    test_every_rule_has_a_call_site.ADVISORY. Promotion flips this assertion."""
+def test_it_is_wired_into_the_conformance_action_as_enforcing():
+    """Promoted 2026-10-23: its failure must fail the consumer's build, and no advisory call
+    of it may remain (an advisory twin would report and change nothing)."""
     action = (HERE.parent / ".github/actions/akash-runner-conformance/action.yml").read_text()
-    assert 'advisory check_no_pre_emudhra_runner_digest.py --workflows-dir "$WORKFLOWS_DIR"' in action
+    assert 'python3 "$ROOT/check_no_pre_emudhra_runner_digest.py" --workflows-dir "$WORKFLOWS_DIR" || rc=1' in action
+    assert "advisory check_no_pre_emudhra_runner_digest.py" not in action
 
 
 # ---- the non-test code scan (scripts hold hard-coded images too) ----------------------------
