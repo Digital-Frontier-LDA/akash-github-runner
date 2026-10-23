@@ -11,6 +11,8 @@ from akash_runner.test_check_standard import valid_workflow
 
 CAPABLE_REF = "f" * 40
 RELEASED_REF = "cb242b51214c5752110be5bb6b4dd791efc2a469"
+# just-akash main after #484: credentials-sops pool + teardown, akash-lease-core v0.18.0.
+SOPS_POOL_REF = "436f091b048b4522e4c12cfa23b0b38838eb5f15"
 OLD_REF = "16e47373f5fead96de2cd0f9609e4b50fb8e845"
 CAPABLE = {
     CAPABLE_REF: frozenset({"request_profiles", "per_node_fit"}),
@@ -199,6 +201,46 @@ def test_released_sdk_requires_both_independently_verified_capabilities():
         )
         assert any(missing in finding for finding in findings)
 
+
+
+def test_post_484_sdk_passes_exact_direct_placement():
+    assert (
+        standard._placement_selection_findings(
+            _direct_deploy(SOPS_POOL_REF), {}, standard.PLACEMENT_IMPLEMENTATIONS
+        )
+        == []
+    )
+
+
+def test_post_484_sdk_supports_a_credentials_sops_consumer():
+    """The shape df-grafana#674 calls it with: only the age key, from the SOPS-only org."""
+    document = _runner_pool()
+    for job_name in ("pool", "teardown"):
+        job = document["jobs"][job_name]
+        job["uses"] = job["uses"].replace(CAPABLE_REF, SOPS_POOL_REF)
+        job["with"]["credentials-sops"] = True
+        job["secrets"] = {"CREDENTIALS_AGE_KEY": "${{ secrets.SOPS_AGE_KEY }}"}
+    document["jobs"]["pool"]["with"]["just-akash-ref"] = SOPS_POOL_REF
+    assert standard.check(document) == []
+
+
+def test_post_484_stamp_cannot_bless_a_near_miss_revision():
+    near_miss = SOPS_POOL_REF[:-1] + ("0" if SOPS_POOL_REF[-1] != "0" else "1")
+    assert near_miss not in standard.PLACEMENT_IMPLEMENTATIONS
+    findings = standard._placement_selection_findings(
+        _direct_deploy(near_miss), {}, standard.PLACEMENT_IMPLEMENTATIONS
+    )
+    assert any("not stamped for request-aware per-node placement" in f for f in findings)
+
+
+def test_post_484_sdk_requires_both_independently_verified_capabilities():
+    for missing in ("request_profiles", "per_node_fit"):
+        inventory = dict(standard.PLACEMENT_IMPLEMENTATIONS)
+        inventory[SOPS_POOL_REF] = inventory[SOPS_POOL_REF] - {missing}
+        findings = standard._placement_selection_findings(
+            _direct_deploy(SOPS_POOL_REF), {}, inventory
+        )
+        assert any(missing in finding for finding in findings)
 
 def test_multi_provider_deploy_without_select_mutation_is_rejected():
     script = "just-akash deploy --select emptiest --provider akash1a --provider akash1b"
@@ -454,6 +496,7 @@ def test_production_stamp_has_no_dead_or_falsely_capable_entry():
         "ebf2e37ac786ad1b7a0643625cbe0626131707fa",
         RELEASED_CAPABLE_REF,
         RELEASED_REF,
+        SOPS_POOL_REF,
     }, "an implementation stamp was added without a corresponding exercised audit case"
     assert all(
         capabilities <= standard.PLACEMENT_REQUIRED_CAPABILITIES
@@ -464,7 +507,7 @@ def test_production_stamp_has_no_dead_or_falsely_capable_entry():
         for ref, capabilities in standard.PLACEMENT_IMPLEMENTATIONS.items()
         if standard.PLACEMENT_REQUIRED_CAPABILITIES <= capabilities
     }
-    assert capable == {RELEASED_CAPABLE_REF, RELEASED_REF}, (
+    assert capable == {RELEASED_CAPABLE_REF, RELEASED_REF, SOPS_POOL_REF}, (
         "an implementation was marked eligible without an exercised audit case"
     )
     exercised = {

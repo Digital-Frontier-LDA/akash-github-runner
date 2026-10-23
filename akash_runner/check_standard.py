@@ -44,6 +44,18 @@ PLACEMENT_IMPLEMENTATIONS: dict[str, frozenset[str]] = {
     "cb242b51214c5752110be5bb6b4dd791efc2a469": frozenset(
         {"request_profiles", "per_node_fit"}
     ),
+    # just-akash main after #484 (credentials-sops pool + teardown, df-grafana-2tr). Verified
+    # 2026-10-23 at THIS revision, not inherited from cb242b51: request_profiles = SDL-derived
+    # profiles (just_akash/request_profile.py:166 derive_resource_profiles) passed with the
+    # group count to BOTH auction paths (deploy.py:1896-1897 collection, :1990-1991
+    # fallback). per_node_fit = pins akash-lease-core v0.18.0 (87e94c0f), whose
+    # ProviderCapacity.fit (capacity.py:390-436) returns FIT only when the aggregate fits AND
+    # _replicas_fit_nodes (:193) packs every replica onto one node each, and whose auction
+    # rejects every non-FIT bid under EMPTIEST (auction.py:844-866). That tag's per-node and
+    # provider-status capacity suites pass (62 cases).
+    "436f091b048b4522e4c12cfa23b0b38838eb5f15": frozenset(
+        {"request_profiles", "per_node_fit"}
+    ),
 }
 PLACEMENT_REQUIRED_CAPABILITIES = frozenset({"request_profiles", "per_node_fit"})
 
