@@ -90,11 +90,12 @@ ENFORCING = {
     "check_context_properties_exist.py",
     # ⭐ PROMOTED 2026-10-23 (df-cicd-rpi.1). Its PROMOTE WHEN was "every consumer workflows-dir
     # is scanned at origin/main and reports 0 pre-fix references". Measured met with the checker
-    # at 392bcd6b, fresh depth-1 clones, judged by exit code (akash-github-runner#85):
+    # at 25a1c8ba, fresh depth-1 clones, judged by exit code (akash-github-runner#85):
     #     df-cicd main b7c9dfca + release/owned-runner-without-407 c82217f1, df-grafana 7e5c2bf4,
     #     DePIN c04b2abd, guardian abb9f2b6, Flynn deploy-env b793b755, Blazing-Back c53bc383,
-    #     blazing 91662b11, just-akash d1158432 -> all rc=0, 0 refs. THIS repo is measured at the
-    #     PR head that carries the rule (392bcd6b), not at main: the first promotion measured main
+    #     blazing 91662b11, just-akash bc893974 -> all rc=0, 0 refs (none has a file under its
+    #     workflows dir beyond direct *.yml/*.yaml, so 25a1c8b's wider scope added no candidates).
+    #     THIS repo is measured at the PR head that carries the rule, not at main: the first promotion measured main
     #     and missed that its own allowlist named six pre-fix digests (now line hashes), so the
     #     self-scan is pinned by test_this_repository_passes_its_own_rule.
     # Exemptions are the reviewed ALLOWLIST only (Flynn's negative control, blazing's attested
