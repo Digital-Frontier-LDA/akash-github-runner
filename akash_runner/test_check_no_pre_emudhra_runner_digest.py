@@ -195,6 +195,15 @@ def test_blazings_live_private_mirror_pin_is_red(tmp_path):
     assert _repo(tmp_path, {"scripts/private_runner_mirror.py": live}) != 0
 
 
+def test_this_repository_passes_its_own_rule(capsys):
+    """The checker ships in non-test code that the repo-wide scan reads: if its allowlist (or
+    anything else here) names a pre-fix digest, the enforcing rule turns THIS repo red. #85's
+    first promotion did exactly that, measured at main instead of at the head carrying it."""
+    workflows = HERE.parent / ".github" / "workflows"
+    assert mod.main(["--workflows-dir", str(workflows)]) == 0, capsys.readouterr().out
+    assert "0 reference(s) to a pre-fix image" in capsys.readouterr().out
+
+
 def test_the_code_scan_is_announced_when_it_cannot_run(tmp_path, capsys):
     wf = tmp_path / "loose"
     wf.mkdir()

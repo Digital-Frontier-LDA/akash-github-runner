@@ -52,6 +52,7 @@ their regeneration owner, rather than by dropping a suffix from the scan.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -80,9 +81,19 @@ _FLYNN_CONTROL = re.compile(
 )
 
 
-def _exact_lines(*lines: str) -> re.Pattern[str]:
-    """Allow exactly these stripped lines, and nothing else in the file."""
-    return re.compile("^(?:" + "|".join(re.escape(line) for line in lines) + ")$")
+class _ExactLineHashes:
+    """Allow exactly the stripped lines whose sha256 is listed, and nothing else in the file.
+
+    Stored as HASHES, not as the lines: the lines name pre-fix digests, and this file is
+    non-test code that the repo-wide scan reads, so a verbatim allowlist made the checker flag
+    its own source (#85 review). A hash names no digest and still matches one exact line.
+    """
+
+    def __init__(self, *sha256_hex: str) -> None:
+        self._hashes = frozenset(sha256_hex)
+
+    def match(self, line: str) -> bool:
+        return hashlib.sha256(line.encode("utf-8")).hexdigest() in self._hashes
 
 
 _MIGRATION_SNAPSHOT = (
@@ -93,7 +104,7 @@ _MIGRATION_SNAPSHOT = (
 
 # (repo-relative path, line regex, reason). A line matching the regex may name a pre-fix
 # digest; nothing else in that file may. Keep each entry as narrow as the case.
-ALLOWLIST: tuple[tuple[str, re.Pattern[str], str], ...] = (
+ALLOWLIST: tuple[tuple[str, re.Pattern[str] | _ExactLineHashes, str], ...] = (
     (
         ".github/scripts/verify_owned_worker_image.py",
         _FLYNN_CONTROL,
@@ -110,25 +121,21 @@ ALLOWLIST: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         # blazing: the fixed ce1 graph mirrored privately by ce1-runner-private-mirror.yml.
         "scripts/ce1_runner_private_mirror.py",
-        _exact_lines(
-            'ROOT = "sha256:ce1b123c98e273479e08e6315fc81f7017957c23dbf88878076e75572b7b18cc"'
-            "  # public image digest"
-        ),
+        # sha256 of: ROOT = "<ce1b123c... public digest>"  # public image digest
+        _ExactLineHashes("33af5dbb9a7eea3f7c62bc494ac6038c7ca5fa557cf4751e4cb3150bd5d6a7da"),
         _MIGRATION_SNAPSHOT,
     ),
     (
         # blazing: the fixed seven-tag GHCR snapshot preserved by ghcr-runner-seven-tag-*.yml.
         "scripts/ghcr_runner_tag_migration.py",
-        _exact_lines(
-            'AAF = "sha256:aaf3799b5e138abef0831bb8467ded7325164316f0cfde5c183fe6e129eae79e"',
-            '"candidate-3259dfc6c6221db9ade4d6e1dca423a32a785008": '
-            '"sha256:a88afbda5e9a6fc333898766c7831a25931433eb92af6ee95ddb0fa2ab2edb6b",',
-            '"candidate-40706a10807d39e7d31065a360b3b3ce95668464": '
-            '"sha256:3c99f89b9b88440d40e418a2d5d74a8e8cad902e8d545504aaed23c8e9fd7a43",',
-            '"candidate-6f5c30c4220c54ec4a9f0f2cfef472f8bb39ce9c": '
-            '"sha256:588f5fa1e514343832393c1ca31b990d8586c5f7ab69035adc2ecb376502f10a",',
-            '"candidate-cce642e0c1dbe1be8cbd869de2e4a1539338f291": '
-            '"sha256:5b43d797d92bb081d2e085046b48579ebf0448a48fcc32f562eafa0c811b4a32",',
+        # sha256 of the AAF constant (aaf3799b) and the 4 "candidate-<sha>": "<digest>",
+        # lines (a88afbda, 3c99f89b, 588f5fa1, 5b43d797), each stripped, at blazing 5ad80fa9.
+        _ExactLineHashes(
+            "49f16c4001b6e86a2ca3387d820ae7cf166699697f2226530d52a382061d4044",
+            "39fcb64834a91b3a8b401978088b5d216a7934f2791d32147f96e614c0ff9dd1",
+            "54e5161e6e9d282404b730576d77904c643d42885d941d8c3045a9c42b6aadb9",
+            "67c9edad8d2069e2e6698e6241d80f2aaf142129b491a536bd7833f09eaac550",
+            "718d1725a774d8634d7649ef621b391bcc81d50c7c20219f141e3c3fc1d0873e",
         ),
         _MIGRATION_SNAPSHOT,
     ),
