@@ -195,6 +195,20 @@ def test_blazings_live_private_mirror_pin_is_red(tmp_path):
     assert _repo(tmp_path, {"scripts/private_runner_mirror.py": live}) != 0
 
 
+@pytest.mark.parametrize(
+    "where",
+    [
+        ".github/workflows/scripts/run.sh",  # nested script under the workflows dir
+        ".github/workflows/sdl/runner.yaml",  # nested yaml: not a direct child, so main() skips it
+        ".github/workflows/helper.py",  # direct child with a non-workflow code suffix
+    ],
+)
+def test_a_file_under_the_workflows_dir_that_is_not_a_direct_workflow_is_scanned(tmp_path, where):
+    """CodeRabbit on #85: only DIRECT *.yml/*.yaml children are scanned as workflows, and the code
+    scan used to skip every descendant of the workflows dir, so these files were read by neither."""
+    assert _repo(tmp_path, {where: f'IMAGE = "{GHCR}{NAMED_PRE_FIX[0]}"\n'}) != 0
+
+
 def test_this_repository_passes_its_own_rule(capsys):
     """The checker ships in non-test code that the repo-wide scan reads: if its allowlist (or
     anything else here) names a pre-fix digest, the enforcing rule turns THIS repo red. #85's

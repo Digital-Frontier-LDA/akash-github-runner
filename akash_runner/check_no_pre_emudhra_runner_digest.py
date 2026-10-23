@@ -36,7 +36,8 @@ images live in scripts too (the owned controller's workload table, Flynn's worke
 DePIN's prerequisites tool). Excluded by structure: test code, meaning any tests/ or test/
 directory at any depth, fixtures/ only inside such a directory, and the Python names
 test_*.py, *_test.py and conftest.py. A shipped script named test_*.sh IS scanned. Prose is
-not read (only code suffixes).
+not read (only code suffixes). Under the workflows dir, only the direct *.yml/*.yaml children
+are workflows; nested files and other suffixes there are scanned as code.
 
 COMMENTS ARE HISTORY. A full-line comment is skipped, and so is a trailing comment: anything
 after whitespace + "#" on yml/yaml/py/sh/toml/cfg/ini lines. So `image: ...@<fixed>  # was
@@ -218,7 +219,10 @@ def code_findings(root: Path) -> list[tuple[str, str]]:
         if not path.is_file() or path.suffix not in _CODE_SUFFIXES:
             continue
         rel = path.relative_to(root)
-        if _never(rel) or _is_test_path(rel) or workflows in path.resolve().parents:
+        # Skip only what main() already scans as a workflow: DIRECT *.yml/*.yaml children. Anything
+        # else under the workflows dir (scripts/run.sh, sdl/x.yaml, helper.py) is code.
+        scanned_as_workflow = path.suffix in {".yml", ".yaml"} and path.resolve().parent == workflows
+        if _never(rel) or _is_test_path(rel) or scanned_as_workflow:
             continue
         try:
             text = path.read_text(encoding="utf-8")
