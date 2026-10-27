@@ -81,3 +81,7 @@ signal; cadence is only an input.
 
 See `CONSUMERS.md`. A reusable with no consumers must still appear there, saying so — an untested
 standard that admits it is untested is better than one implying adoption it does not have.
+
+## Owned CI cleanup operator runbook
+
+[Owned CI cleanup operator runbook](OWNED-CI-OPERATOR-RUNBOOK.md) — incomplete local working draft; final publication requires the accepted clean baseline and complete ordinary observation window.
