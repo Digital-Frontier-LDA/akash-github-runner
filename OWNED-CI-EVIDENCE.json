@@ -229,7 +229,7 @@
       "unchanged_official_artifact_identity_and_wheel_pins_evidence_key": "dated_B_source_runtime_CI_snapshot.SDK.released_wheels",
       "version": "1.50.0"
     },
-    "as_of": "2026-10-27T20:35:03+00:00",
+    "as_of": "2026-10-27T21:48:06+00:00",
     "as_of_precision": "retained record timestamp; each underlying observation keeps its own time",
     "authentication_required": true,
     "controller_full20_scope": {
@@ -1792,8 +1792,8 @@
     },
     "scope": "Superseded wording archived whole. Its blanket full-AC1-before-publication coupling is corrected below; historical unpublished state and all evidence facts remain valid."
   },
-  "facts_as_of": "2026-10-27T20:35:03+00:00",
-  "facts_as_of_precision": "Retained baseline root/independent acceptance and finite initial driver observation through 20:35:03 UTC. The original publication cutoff and capture exit keep their actual earlier times; no continuing driver liveness, internal phase, first post, checkpoint or window is inferred.",
+  "facts_as_of": "2026-10-27T21:48:06+00:00",
+  "facts_as_of_precision": "Finite reconciliation through the 21:48:06 UTC initial observation of a distinct future-context driver. The first window attempt is closed held; the accepted baseline and its original cutoff are unchanged. Later metadata is a separate diagnostic, not reconstruction of the lost original predicate or cycle credit. No later liveness, phase, target or native result is inferred.",
   "goal_complete": false,
   "historical_case_aggregate": {
     "accepted_at": "2026-10-18T20:46:09.081660+00:00",
@@ -2201,7 +2201,7 @@
     "accepted_checkpoints_scope": "Historical 9456 checkpoints and dated B baseline retain their original scope; M had no accepted baseline/window. Current source 425 now has its own accepted baseline, but none of those records supplies a current checkpoint or clock.",
     "accepted_cycles": 0,
     "accepted_hours": 0,
-    "accounting_and_zero_eligible_scope": "Current source 425 has one accepted complete native baseline with integer zero eligible orphans at that observation. It earns zero cycles and does not certify continuing zero eligible orphans or complete post-baseline all-attempt accounting. Dated B/M observations remain separately scoped.",
+    "accounting_and_zero_eligible_scope": "Current source 425 retains its accepted complete baseline with integer zero eligible orphans at that observation. The first native window attempt held in after-accounting and persisted no checkpoint or handoff. No post-baseline all-attempt/eligible-zero continuity or first retained post is accepted; later metadata and source-only clock handling create no cycle credit.",
     "actual_span_seconds": 0,
     "all_events_runs_attempts_failures_pending_held_unknown_accounted": false,
     "checkpoint_public_urls": [],
@@ -2225,7 +2225,7 @@
     "current_eligible_orphan_count": null,
     "current_native_reset_checkpoint_accepted": false,
     "current_source_commit": "425874329bcaf06ff3a29890a2c831161c867311",
-    "current_streak_state": "current_source_425_baseline_accepted_waiting_first_retained_post",
+    "current_streak_state": "current_source_425_baseline_accepted_first_window_held_distinct_future_context_launched",
     "current_streak_zero_credit_is_operator_status_not_synthetic_native_reset_proof": true,
     "dated_0c_observer_followup_status": {
       "consumed_context_intake_selector_omission_proven": true,
@@ -2457,16 +2457,74 @@
     "minimum_consecutive_complete_cycles": 3,
     "minimum_real_span_seconds": 86400,
     "observer_followup_status": {
-      "as_of": "2026-10-27T20:35:03+00:00",
-      "as_of_precision": "finite root-reported original driver observation only",
+      "as_of": "2026-10-27T21:48:06+00:00",
+      "as_of_precision": "initial root-reported running/no-output observation only",
       "baseline_accepted": true,
       "baseline_publication_cutoff": "2026-10-27T20:27:26.793362+00:00",
       "checkpoint_accepted": false,
+      "closed_first_attempt_retried_or_resumed": false,
+      "closed_first_window_attempt": {
+        "accounting_projection_persisted": false,
+        "after_qualification_record_exists": false,
+        "attempt": 1,
+        "before_qualification_record_exists": true,
+        "charged_native_reads": 158,
+        "checkpoint_credit": 0,
+        "checkpoint_exists": false,
+        "driver_metadata_GET_calls": 257,
+        "first_retained_post": null,
+        "fixed_failure_category": "OperatorHeld",
+        "fixed_failure_phase": "accounting-after",
+        "fixed_failure_reason": "window-attempt-accounting-held",
+        "handoff_exists": false,
+        "held_reported_at": "2026-10-27T21:26:10.347724+00:00",
+        "native_charged_counter_is_not_total_RPC_calls": true,
+        "native_window_exit": 1,
+        "original_driver_natural_exit": 2,
+        "original_inner_accounting_predicate": "UNKNOWN",
+        "retry_resume_or_lost_result_recovery_authorized": false,
+        "run_id": 40586193826,
+        "run_url": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/actions/runs/40586193826",
+        "scope": "Successful workflow metadata is distinct from the held native window attempt. The exact target-prefixed inventory retained before-qualification and consumed intent/admission artifacts; original accounting comparison inputs and returned native window data were not persisted. The accepted baseline remains dated and valid; no checkpoint or clock can be recovered.",
+        "source_commit": "425874329bcaf06ff3a29890a2c831161c867311",
+        "workflow_conclusion": "success",
+        "workflow_created_at": "2026-10-27T21:22:07Z",
+        "workflow_status": "completed",
+        "workflow_updated_at": "2026-10-27T21:24:05Z",
+        "workflow_updated_at_is_not_cleanup_job_completion": true
+      },
       "continuous_liveness_after_snapshot_claimed": false,
+      "distinct_future_context_driver_launch_at": "2026-10-27T21:47:23.173028+00:00",
       "first_retained_post": null,
+      "forward_typed_placeholder_handling": {
+        "all_attempt_accounting_native_collector_and_caps_unchanged": true,
+        "complete_job_populations_and_run_time_envelopes_preserved": true,
+        "malformed_and_other_bad_clocks_still_hold": true,
+        "optional_timestamps_parsed_before_empty_skipped_rule": true,
+        "original_failed_scope_replayed": false,
+        "scope": "Finite forward handling of typed empty completed/skipped placeholders only; no generic timestamp waiver, predicate relaxation, recovered result or demonstrated native-window success.",
+        "source_reviewed": true,
+        "typed_empty_completed_skipped_jobs_not_execution_intervals": true
+      },
+      "later_typed_clock_metadata_diagnostic": {
+        "actual_steps_fields_are_typed_lists": 6,
+        "complete_jobs": 6,
+        "completed_skipped_exact_empty_lists": 4,
+        "independent_accepted_at": "2026-10-27T21:41:23.693565+00:00",
+        "native_or_window_credit": 0,
+        "observed_at": "2026-10-27T21:39:53.059370+00:00",
+        "original_failed_RAM_or_predicate_reconstructed": false,
+        "root_accepted_at": "2026-10-27T21:40:20.322559+00:00",
+        "scope": "A distinct later read-only metadata diagnostic checked actual field presence and exact list type before projection. It establishes these current placeholder shapes only, not the original unretained accounting failure cause.",
+        "typed_empty_inverted_one_second_placeholders": 3
+      },
+      "native_attempt_or_result_reported": false,
+      "native_attempt_started": "unknown",
       "observed_state": "running_no_output_reported_internal_phase_unestablished",
+      "reviewed_distinct_future_context_driver_launched": true,
       "reviewed_first_window_driver_launched": true,
-      "scope": "At 20:35:03 UTC the original first-window driver was running and had reported no output. This finite observation establishes neither its internal phase nor a native attempt, first retained post, checkpoint, future liveness or window credit. The accepted baseline and original cutoff are separate actual facts.",
+      "scope": "The first window attempt is closed held. A separately reviewed driver for one genuinely distinct future context launched at 21:47:23.173028 UTC and was running with no output at 21:48:06 UTC. Its internal phase, native-start state and any selected context are unestablished by silence. No later liveness, target acceptance, checkpoint or cycle credit is implied.",
+      "selected_future_context_reported": false,
       "source_commit": "425874329bcaf06ff3a29890a2c831161c867311",
       "window_accepted": false
     },
@@ -2730,6 +2788,21 @@
     "documentation_publication_implies_milestone_or_issue_acceptance": false,
     "documentation_repository_is_existing_public_home": true,
     "documentation_repository_url": "https://github.com/Digital-Frontier-LDA/akash-github-runner",
+    "draft_pull_request": {
+      "draft": true,
+      "merged": false,
+      "number": 87,
+      "observed_as_of": "2026-10-27T21:48:06+00:00",
+      "url": "https://github.com/Digital-Frontier-LDA/akash-github-runner/pull/87"
+    },
+    "exact_committed_draft_head_CI": {
+      "attempt": 1,
+      "head_commit": "f43c092b26a9dd6ce6f63fe8e749654b5d47dbd0",
+      "run_id": 40582217366,
+      "scope": "Both jobs passed for this exact existing committed draft head only. That recorded result does not verify subsequently updated draft content; no new-head CI, merge, release or final milestone acceptance is claimed.",
+      "successful_jobs": 2,
+      "url": "https://github.com/Digital-Frontier-LDA/akash-github-runner/actions/runs/40582217366"
+    },
     "existing_authorized_issue_linkage_url": null,
     "external_release_attestation_url": null,
     "external_verification_rule": "After actual merge/readback, record actual immutable public commit/blob URLs and CI/review verification in the authorized existing issue linkage, private post-merge acceptance, or a separate non-self-referential attestation. They cannot be this document's future self-reference.",
@@ -2739,6 +2812,7 @@
     "full_issue_acceptance_required_for_issue_closure": true,
     "own_future_CI_must_not_be_preclaimed": true,
     "published": false,
+    "published_scope": "Normal merged release publication is incomplete; visibility of an open public draft is recorded separately.",
     "remaining_completion_blocks": [
       "Literal milestone: the current source 425 native baseline is accepted at its original cutoff, but no first retained post or current checkpoint is accepted. The baseline earns zero window cycles.",
       "Literal milestone: the complete 24-hour/three-consecutive-cycle window, zero-eligible/all-outcome evidence and final requirement-by-requirement review remain unproved.",
@@ -2747,7 +2821,7 @@
     ],
     "requirements_distinction": "The literal milestone requires genuine joined four-path recovery/convergence with independent closure/exact deregistration, separate escrow, safety/ship/reliability-window checks and publication. It does not separately require a retained original positive close-actor/return for every path. Those three causal UNKNOWNs still block full issue AC1, issue closure and four-path causal claims. An accurately scoped documentation publication does not itself complete the milestone or close the issue.",
     "self_commit_or_blob_URL_must_not_be_embedded": true,
-    "status": "pending_normal_publication_and_external_release_verification"
+    "status": "public_draft_PR_open_unmerged_release_verification_pending"
   },
   "registration_snapshot_source_only_review": {
     "caps_guards_or_temporal_contract_relaxed": false,
@@ -2765,5 +2839,5 @@
     "source_commit": "973c92315c9eb3a4af458d5cb4682ef96b2069f8"
   },
   "schema": "owned_ci_cleanup_public_evidence_candidate_v1",
-  "status": "INCOMPLETE_UNPUBLISHED_LOCAL_CANDIDATE"
+  "status": "INCOMPLETE_PUBLIC_DRAFT_PR_NOT_RELEASED"
 }
