@@ -2907,6 +2907,31 @@
     "final_root_clause_review_at": null,
     "full_issue_AC1_is_blanket_milestone_or_documentation_publication_gate": false,
     "full_issue_acceptance_required_for_issue_closure": true,
+    "operator_runbook_reproducibility": {
+      "native_candidate_cli_flags": [
+        "--run-id",
+        "--attempt",
+        "--checkpoint"
+      ],
+      "native_candidate_exit_2_does_not_prove_a_valid_partial_checkpoint": true,
+      "native_candidate_is_the_stronger_qualified_wrapper_profile": false,
+      "native_candidate_output_requires_private_handling": true,
+      "native_candidate_source_commit": "425874329bcaf06ff3a29890a2c831161c867311",
+      "native_candidate_source_links": {
+        "controller_environment_action": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/blob/425874329bcaf06ff3a29890a2c831161c867311/.github/actions/owned-controller-env/action.yml",
+        "controller_requirements": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/blob/425874329bcaf06ff3a29890a2c831161c867311/scripts/owned-controller-requirements.txt",
+        "native_cli": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/blob/425874329bcaf06ff3a29890a2c831161c867311/scripts/owned_akash_cleanup_cycle_evidence.py",
+        "native_evidence_contract": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/blob/425874329bcaf06ff3a29890a2c831161c867311/docs/owned-ci-cycle-evidence.md",
+        "ordinary_cycle_pipeline": "https://github.com/Digital-Frontier-LDA/guardian-cli-claude-code/blob/425874329bcaf06ff3a29890a2c831161c867311/docs/owned-ci-cycle-pipeline.md"
+      },
+      "qualified_operator_bundle_acquisition": {
+        "remaining_gap": "Provide authorized operators a real versioned restricted-bundle acquisition reference, exact reviewed entrypoint/input/result contracts and protected retrieval of accepted canonical checkpoints and their review records. No retrievable bundle reference is established in this projection; no private payload, local path, identity or fingerprint publication is required.",
+        "required_before_final_operator_runbook_publication": true,
+        "versioned_restricted_bundle_reference": null
+      },
+      "sanitized_public_evidence_projection_is_a_canonical_checkpoint": false,
+      "status": "open_restricted_qualified_operator_bundle_acquisition_not_documented"
+    },
     "own_future_CI_must_not_be_preclaimed": true,
     "published": false,
     "published_scope": "Normal merged release publication is incomplete; visibility of an open public draft is recorded separately.",
@@ -2914,7 +2939,8 @@
       "Literal milestone: the current source 425 baseline and first partial checkpoint are accepted, but one cycle with zero elapsed span does not establish the complete observation window.",
       "Literal milestone: the complete 24-hour/three-consecutive-cycle window, zero-eligible/all-outcome evidence and final requirement-by-requirement review remain unproved.",
       "Literal milestone: immutable public evidence/runbook publication and its actual normal review/merge/readback verification remain pending.",
-      "Conditional issue closure: full AC1 positive eligible reclamation evidence remains UNKNOWN for three historical paths; full issue acceptance must still be satisfied before closing #1063."
+      "Conditional issue closure: full AC1 positive eligible reclamation evidence remains UNKNOWN for three historical paths; full issue acceptance must still be satisfied before closing #1063.",
+      "Final operator-runbook publication: a real versioned restricted-bundle acquisition reference, reviewed entrypoint/input/result contracts and protected accepted-checkpoint/review-record retrieval remain undocumented. The tracked native candidate CLI is not the stronger qualified wrapper profile."
     ],
     "requirements_distinction": "The literal milestone requires genuine joined four-path recovery/convergence with independent closure/exact deregistration, separate escrow, safety/ship/reliability-window checks and publication. It does not separately require a retained original positive close-actor/return for every path. Those three causal UNKNOWNs still block full issue AC1, issue closure and four-path causal claims. An accurately scoped documentation publication does not itself complete the milestone or close the issue.",
     "self_commit_or_blob_URL_must_not_be_embedded": true,
