@@ -48,6 +48,16 @@ ALLOWLIST. A file that MUST hold a pre-fix digest gets an entry: path, a line pa
 reason. Generated RECORDS (SBOMs, attestations, receipts such as blazing's owned-history
 proof) name pre-fix digests as history, not pins. They go in ALLOWLIST by path with `.*` and
 their regeneration owner, rather than by dropping a suffix from the scan.
+
+ONE LEVEL OF INDIRECTION (df-cicd-rpi.10). A `uses:` of a just-akash reusable workflow at a
+40-hex sha runs the image THAT file names at THAT sha, which is not in the consumer's files.
+Measured 2026-10-29: df-cicd's template pinned runner-pool.yml@ca353a9c (pre-fix aaf3799b) and
+this rule said 0. Such a call is red when (sha, workflow file) is in
+data/just_akash_pre_emudhra_workflow_refs.txt, which generate_just_akash_pre_emudhra_refs.py
+measures over every commit of just-akash (offline: no network at check time). RESIDUAL: a sha the
+file does not list passes. A new just-akash commit that re-introduces a pre-fix digest is
+invisible here until the generator re-runs; the scheduled just-akash-refs.yml workflow re-runs
+it and fails on any unlisted pair. Only the called file is judged, not the files IT calls.
 """
 
 from __future__ import annotations
@@ -66,6 +76,23 @@ PRE_EMUDHRA_DIGESTS: frozenset[str] = frozenset(
     line.split()[0]
     for line in DATA.read_text(encoding="utf-8").splitlines()
     if line.startswith("sha256:")
+)
+JUST_AKASH_REFS_DATA = Path(__file__).resolve().parent / "data" / "just_akash_pre_emudhra_workflow_refs.txt"
+
+
+def load_just_akash_refs(path: Path = JUST_AKASH_REFS_DATA) -> frozenset[tuple[str, str]]:
+    """(commit, .github/workflows/<file>) pairs; a missing file is an error, never 'none listed'."""
+    return frozenset(
+        (fields[0], fields[1])
+        for fields in (line.split() for line in path.read_text(encoding="utf-8").splitlines())
+        if fields and not fields[0].startswith("#")
+    )
+
+
+JUST_AKASH_PRE_EMUDHRA_REFS = load_just_akash_refs()
+_JUST_AKASH_USES = re.compile(
+    r"\buses:\s*['\"]?digital-frontier-lda/just-akash/(\.github/workflows/[\w.-]+\.ya?ml)@([0-9a-f]{40})\b",
+    re.IGNORECASE,
 )
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _CODE_SUFFIXES = {".py", ".sh", ".bash", ".yml", ".yaml", ".json", ".toml", ".cfg", ".ini"}
@@ -140,6 +167,16 @@ ALLOWLIST: tuple[tuple[str, re.Pattern[str] | _ExactLineHashes, str], ...] = (
         ),
         _MIGRATION_SNAPSHOT,
     ),
+    (
+        # this repo: test_pool_handoff_lifetime's caller, an offline extract of df-cicd@061d2d09's
+        # template. Only its pool `uses:` line (a just-akash sha in the indirection list).
+        "akash_runner/fixtures/pool_handoff/caller.yml",
+        # sha256 of: uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@ca353a9c...
+        _ExactLineHashes("550ea51dcffaaff5a15a08cc5780a5a2e2663fdb8952dfccc9324e67c4899f5c"),
+        "An EXTRACT, never executed: test_pool_handoff_lifetime models the reusable call offline, "
+        "and its header names the df-cicd commit it was copied from, so repinning would falsify "
+        "that provenance (df-cicd-rpi.10).",
+    ),
 )
 
 
@@ -182,6 +219,21 @@ def findings(text: str, suffix: str = ".yml") -> list[str]:
     """Findings for one file's text: pre-fix digests in its code (comments are history)."""
     code = "\n".join(_code_part(line, suffix) for line in text.splitlines())
     return [_message(d) for d in _pre_fix(code)]
+
+
+def indirect_findings(text: str, suffix: str = ".yml") -> list[str]:
+    """A just-akash reusable workflow called at a sha whose file pins a pre-fix image."""
+    out = []
+    for line in text.splitlines():
+        for match in _JUST_AKASH_USES.finditer(_code_part(line, suffix)):
+            path, sha = match.group(1), match.group(2).lower()
+            if (sha, path) in JUST_AKASH_PRE_EMUDHRA_REFS:
+                out.append(
+                    f"just-akash {path}@{sha} runs a pre-fix runner image (built before the "
+                    f"eMudhra/emSign CA distrust, df-cicd-rpi.10); pin a just-akash sha whose "
+                    f"{path.rsplit('/', 1)[-1]} names {FIXED_INDEX} or a later build"
+                )
+    return out
 
 
 def negative_control_findings(rel: str, text: str) -> list[str]:
@@ -231,6 +283,9 @@ def code_findings(root: Path) -> list[tuple[str, str]]:
         posix = rel.as_posix()
         out += [(posix, f) for f in negative_control_findings(posix, text)]
         for line in text.splitlines():
+            if not _allowed(posix, line):
+                out += [(posix, f) for f in indirect_findings(line, path.suffix)]
+        for line in text.splitlines():
             code = _code_part(line, path.suffix)
             if _pre_fix(code) and not _allowed(posix, line):
                 out += [(posix, f) for f in findings(code, path.suffix)]
@@ -255,7 +310,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     bad = 0
     for path in sorted(root.glob("*.yml")) + sorted(root.glob("*.yaml")):
-        for finding in findings(path.read_text(encoding="utf-8"), path.suffix):
+        text = path.read_text(encoding="utf-8")
+        for finding in findings(text, path.suffix) + indirect_findings(text, path.suffix):
             bad += 1
             print(f"::error file={path},title=Pre-eMudhra runner image::{finding}")
     repo = Path(args.repo_root) if args.repo_root else (
