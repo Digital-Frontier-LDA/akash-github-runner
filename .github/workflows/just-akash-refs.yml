@@ -8,7 +8,11 @@
 # FAILS on any pre-fix pair the file does not list. A listed pair the mirror lacks is only noted:
 # GitHub keeps serving a deleted branch's commit, so the list only grows.
 #
-# just-akash is public: the clone is anonymous and this job holds no credential.
+# just-akash is public: the clone is anonymous and the measuring job holds no credential.
+#
+# ⚠ A red SCHEDULED run notifies only whoever last edited the cron line (df-grafana-7e on #88).
+# So `report` opens an issue (or comments on the open one) where the repo's watchers see it. It
+# runs only after `measure` fails on a schedule or dispatch, and it is the only job that can write.
 name: just-akash refs
 
 on:
@@ -46,5 +50,26 @@ jobs:
       - name: Mirror just-akash (every ref, never shallow)
         run: git clone --quiet --mirror https://github.com/Digital-Frontier-LDA/just-akash "$RUNNER_TEMP/just-akash.git"
 
-      - name: Every pre-fix (commit, workflow) is in the list
+      - name: Every pre-fix just-akash commit is in the list
         run: python akash_runner/generate_just_akash_pre_emudhra_refs.py --repo "$RUNNER_TEMP/just-akash.git" --check
+
+  report:
+    name: open an issue for an unlisted pre-fix commit
+    needs: measure
+    if: ${{ failure() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="just-akash refs: a pre-fix runner commit is not listed (df-cicd-rpi.10)"
+          body="The scheduled re-measure of just-akash found a commit whose tree pins a pre-eMudhra runner image and that data/just_akash_pre_emudhra_commits.txt does not list. Until it is listed, check_no_pre_emudhra_runner_digest passes a consumer calling that sha. Run: $RUN_URL. Fix: re-run the generator with --write (its header has the command) and open a PR."
+          n=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then gh issue comment "$n" --body "Still failing: $RUN_URL"; else gh issue create --title "$title" --body "$body"; fi

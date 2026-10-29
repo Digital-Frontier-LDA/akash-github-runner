@@ -1,9 +1,10 @@
-# Every (just-akash commit, workflow file) whose file at that commit pins a df-akash-runner image
-# built BEFORE the eMudhra/emSign CA distrust (df-cicd-rpi.10). GENERATED, never hand-edited:
+# Every just-akash commit whose tree pins a df-akash-runner image built BEFORE the eMudhra/emSign
+# CA distrust, in non-test code (df-cicd-rpi.10). GENERATED, never hand-edited:
 #   git clone --mirror https://github.com/Digital-Frontier-LDA/just-akash just-akash.git
 #   python akash_runner/generate_just_akash_pre_emudhra_refs.py --repo just-akash.git --write
-# Measured over `git rev-list --all` of the clone, with check_no_pre_emudhra_runner_digest's own
-# findings() (comments are history). Format: <commit>  <.github/workflows file>  <digest prefix>
+# Measured over `git rev-list --all` of the clone, the whole tree judged with
+# check_no_pre_emudhra_runner_digest's own scope (comments are history, test code is not read).
+# Format: <commit>  <first offending path>  <digest prefix>
 01867f79d1f57a17003a630c2fda361d185be803  .github/workflows/runner-pool.yml  aaf3799b5e13
 01da5f5be4a7e0ca2c0a27eb25907dd4cd64b622  .github/workflows/runner-pool.yml  aaf3799b5e13
 01e322ea38beffe5527223c06a2b325de4b67e30  .github/workflows/runner-pool.yml  aaf3799b5e13
@@ -386,6 +387,7 @@ a4bfa027e7eb9357e9dc3efcc142f88e1b988045  .github/workflows/runner-pool.yml  aaf
 a4db634c587b33450f0ce354865143675555013f  .github/workflows/runner-pool.yml  aaf3799b5e13
 a4ede522c5fc82429137928596f9c74e7166934d  .github/workflows/runner-pool.yml  aaf3799b5e13
 a4f804a34863f78f4e75ad9a35a90e4c2352a3b3  .github/workflows/runner-pool.yml  aaf3799b5e13
+a4fdd525d44ca9b4204423d5a81a8054f80cf84a  sdl/github-runner-probe.yaml  aaf3799b5e13
 a54d1223951d43c1dd81b75a23656cda25a7ce96  .github/workflows/runner-pool.yml  aaf3799b5e13
 a5a2fa7c5b234b90eb6692f5add0f8adcb23d502  .github/workflows/runner-pool.yml  aaf3799b5e13
 a5a2fa8d16d0144f7cd494b1ecfd8de3790707b8  .github/workflows/runner-pool.yml  aaf3799b5e13

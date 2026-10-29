@@ -50,14 +50,17 @@ proof) name pre-fix digests as history, not pins. They go in ALLOWLIST by path w
 their regeneration owner, rather than by dropping a suffix from the scan.
 
 ONE LEVEL OF INDIRECTION (df-cicd-rpi.10). A `uses:` of a just-akash reusable workflow at a
-40-hex sha runs the image THAT file names at THAT sha, which is not in the consumer's files.
+sha runs what just-akash's files name at THAT sha, which is not in the consumer's files.
 Measured 2026-10-29: df-cicd's template pinned runner-pool.yml@ca353a9c (pre-fix aaf3799b) and
-this rule said 0. Such a call is red when (sha, workflow file) is in
-data/just_akash_pre_emudhra_workflow_refs.txt, which generate_just_akash_pre_emudhra_refs.py
-measures over every commit of just-akash (offline: no network at check time). RESIDUAL: a sha the
-file does not list passes. A new just-akash commit that re-introduces a pre-fix digest is
-invisible here until the generator re-runs; the scheduled just-akash-refs.yml workflow re-runs
-it and fails on any unlisted pair. Only the called file is judged, not the files IT calls.
+this rule said 0. Such a call is red when the sha is in data/just_akash_pre_emudhra_commits.txt:
+every just-akash commit whose tree pins a pre-fix image in non-test code (a workflow, or an SDL
+such as sdl/github-runner-probe.yaml), measured by generate_just_akash_pre_emudhra_refs.py.
+Offline: no network at check time. A just-akash `uses:` at anything other than a 40-hex sha (a
+tag or a branch) is red too, because the list cannot judge a ref that moves: v1.50.0 and 103
+branches resolved to listed commits (df-grafana-7e on #88). RESIDUAL: a sha the file does not
+list passes. A new just-akash commit that re-introduces a pre-fix digest is invisible here until
+the generator re-runs; the scheduled just-akash-refs.yml workflow re-runs it and fails on any
+unlisted commit. Only the called sha's own tree is judged, not the shas IT calls.
 """
 
 from __future__ import annotations
@@ -77,23 +80,24 @@ PRE_EMUDHRA_DIGESTS: frozenset[str] = frozenset(
     for line in DATA.read_text(encoding="utf-8").splitlines()
     if line.startswith("sha256:")
 )
-JUST_AKASH_REFS_DATA = Path(__file__).resolve().parent / "data" / "just_akash_pre_emudhra_workflow_refs.txt"
+JUST_AKASH_COMMITS_DATA = Path(__file__).resolve().parent / "data" / "just_akash_pre_emudhra_commits.txt"
 
 
-def load_just_akash_refs(path: Path = JUST_AKASH_REFS_DATA) -> frozenset[tuple[str, str]]:
-    """(commit, .github/workflows/<file>) pairs; a missing file is an error, never 'none listed'."""
+def load_just_akash_commits(path: Path = JUST_AKASH_COMMITS_DATA) -> frozenset[str]:
+    """Listed commits; a missing file is an error, never 'none listed'."""
     return frozenset(
-        (fields[0], fields[1])
+        fields[0]
         for fields in (line.split() for line in path.read_text(encoding="utf-8").splitlines())
         if fields and not fields[0].startswith("#")
     )
 
 
-JUST_AKASH_PRE_EMUDHRA_REFS = load_just_akash_refs()
+JUST_AKASH_PRE_EMUDHRA_COMMITS = load_just_akash_commits()
 _JUST_AKASH_USES = re.compile(
-    r"\buses:\s*['\"]?digital-frontier-lda/just-akash/(\.github/workflows/[\w.-]+\.ya?ml)@([0-9a-f]{40})\b",
+    r"\buses:\s*['\"]?digital-frontier-lda/just-akash/(\.github/workflows/[\w.-]+\.ya?ml)@([^\s'\"]+)",
     re.IGNORECASE,
 )
+_SHA = re.compile(r"[0-9a-f]{40}", re.IGNORECASE)
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _CODE_SUFFIXES = {".py", ".sh", ".bash", ".yml", ".yaml", ".json", ".toml", ".cfg", ".ini"}
 _HASH_COMMENT_SUFFIXES = _CODE_SUFFIXES - {".json"}
@@ -169,13 +173,25 @@ ALLOWLIST: tuple[tuple[str, re.Pattern[str] | _ExactLineHashes, str], ...] = (
     ),
     (
         # this repo: test_pool_handoff_lifetime's caller, an offline extract of df-cicd@061d2d09's
-        # template. Only its pool `uses:` line (a just-akash sha in the indirection list).
+        # template. Only its two `uses:` lines (pool and teardown, both at the listed ca353a9c).
         "akash_runner/fixtures/pool_handoff/caller.yml",
-        # sha256 of: uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-pool.yml@ca353a9c...
-        _ExactLineHashes("550ea51dcffaaff5a15a08cc5780a5a2e2663fdb8952dfccc9324e67c4899f5c"),
+        # sha256 of: uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-{pool,teardown}.yml@ca353a9c...
+        _ExactLineHashes(
+            "550ea51dcffaaff5a15a08cc5780a5a2e2663fdb8952dfccc9324e67c4899f5c",
+            "39a679dd025773b89fbd5f8657c709cd7a79210b3fa05aa354657f45a79bdcc4",
+        ),
         "An EXTRACT, never executed: test_pool_handoff_lifetime models the reusable call offline, "
         "and its header names the df-cicd commit it was copied from, so repinning would falsify "
         "that provenance (df-cicd-rpi.10).",
+    ),
+    (
+        # this repo: the callee side of the same extract, copied from just-akash@0b16405e's
+        # runner-pool.yml. Only its teardown `uses:` line (85f85970, a listed sha).
+        "akash_runner/fixtures/pool_handoff/callee.yml",
+        # sha256 of: uses: Digital-Frontier-LDA/just-akash/.github/workflows/runner-teardown.yml@85f85970...
+        _ExactLineHashes("6b5409862b474b2de674202e6ee20592e22f67353233032dc3f7f4ed3407982f"),
+        "An EXTRACT, never executed, of just-akash@0b16405e: its header names that commit, so "
+        "repinning would falsify that provenance (df-cicd-rpi.10).",
     ),
 )
 
@@ -222,16 +238,22 @@ def findings(text: str, suffix: str = ".yml") -> list[str]:
 
 
 def indirect_findings(text: str, suffix: str = ".yml") -> list[str]:
-    """A just-akash reusable workflow called at a sha whose file pins a pre-fix image."""
+    """A just-akash reusable workflow called at a listed sha, or at a ref that is not a sha."""
     out = []
     for line in text.splitlines():
         for match in _JUST_AKASH_USES.finditer(_code_part(line, suffix)):
-            path, sha = match.group(1), match.group(2).lower()
-            if (sha, path) in JUST_AKASH_PRE_EMUDHRA_REFS:
+            path, ref = match.group(1), match.group(2)
+            if not _SHA.fullmatch(ref):
                 out.append(
-                    f"just-akash {path}@{sha} runs a pre-fix runner image (built before the "
-                    f"eMudhra/emSign CA distrust, df-cicd-rpi.10); pin a just-akash sha whose "
-                    f"{path.rsplit('/', 1)[-1]} names {FIXED_INDEX} or a later build"
+                    f"just-akash {path}@{ref} is not pinned to a 40-hex sha, so whether it runs "
+                    f"a pre-fix runner image cannot be judged (df-cicd-rpi.10); pin the sha"
+                )
+            elif ref.lower() in JUST_AKASH_PRE_EMUDHRA_COMMITS:
+                out.append(
+                    f"just-akash {path}@{ref.lower()} is a commit whose tree pins a pre-fix runner "
+                    f"image (built before the eMudhra/emSign CA distrust, df-cicd-rpi.10), whether "
+                    f"or not this file is the one that names it; move every just-akash pin to a sha "
+                    f"whose tree names {FIXED_INDEX} or a later build"
                 )
     return out
 
